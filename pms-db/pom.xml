@@ -32,6 +32,18 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Schema migrations (versioned SQL under src/main/resources/db/migration,
+             run automatically by Spring Boot on startup). -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Shared PMS module -->
         <dependency>
             <groupId>com.sentrifugo</groupId>

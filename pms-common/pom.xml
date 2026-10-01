@@ -16,4 +16,15 @@
 
     <artifactId>pms-common</artifactId>
 
+    <dependencies>
+
+        <!-- Error shape ({detail, code}), correlation-id filter, exception handling —
+             cross-cutting web concerns every other module builds on. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+    </dependencies>
+
 </project>
