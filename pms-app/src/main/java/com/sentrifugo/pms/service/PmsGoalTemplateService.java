@@ -81,8 +81,8 @@ public class PmsGoalTemplateService {
     // ── Reads ────────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<PmsGoalTemplateListResponse> getGoalTemplates(UUID organisationId, String financialYear,
-                                                              UUID departmentId, UUID plantId, String search) {
+    public List<PmsGoalTemplateListResponse> getGoalTemplates(String organisationId, String financialYear,
+                                                              String departmentId, String plantId, String search) {
         var spec = PmsGoalTemplateSpecifications.matching(organisationId, financialYear, departmentId, plantId,
                 search);
         return templateRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdDate")).stream()
@@ -92,7 +92,7 @@ public class PmsGoalTemplateService {
     }
 
     @Transactional(readOnly = true)
-    public PmsGoalTemplateResponse getGoalTemplate(UUID organisationId, UUID templateId) {
+    public PmsGoalTemplateResponse getGoalTemplate(String organisationId, UUID templateId) {
         return toResponse(find(organisationId, templateId));
     }
 
@@ -100,7 +100,7 @@ public class PmsGoalTemplateService {
 
     /** Screen 2.2 "Save and Next". */
     @Transactional
-    public PmsGoalTemplateResponse createGoalTemplate(UUID organisationId, PmsGoalTemplateRequest request) {
+    public PmsGoalTemplateResponse createGoalTemplate(String organisationId, PmsGoalTemplateRequest request) {
         log.info("Creating goal template for organisation {}", organisationId);
         PmsTemplateStatus status = initialStatus(request.status());
         PmsGoalTemplateEntity template = templateMapper.toEntity(PmsGoalTemplateDTO.builder()
@@ -118,7 +118,7 @@ public class PmsGoalTemplateService {
     }
 
     @Transactional
-    public PmsGoalTemplateResponse updateGoalTemplate(UUID organisationId, UUID templateId,
+    public PmsGoalTemplateResponse updateGoalTemplate(String organisationId, UUID templateId,
                                                       PmsGoalTemplateRequest request) {
         log.info("Updating goal template {}", templateId);
         PmsGoalTemplateEntity template = find(organisationId, templateId);
@@ -139,7 +139,7 @@ public class PmsGoalTemplateService {
 
     /** Screen 2.3 "Save as Draft" / "Save and Next": replaces the template's KRA and KPI selection. */
     @Transactional
-    public PmsGoalTemplateResponse saveKraKpi(UUID organisationId, UUID templateId,
+    public PmsGoalTemplateResponse saveKraKpi(String organisationId, UUID templateId,
                                               PmsGoalTemplateKraKpiRequest request) {
         log.info("Saving KRA/KPI configuration of goal template {}", templateId);
         PmsGoalTemplateEntity template = find(organisationId, templateId);
@@ -224,15 +224,12 @@ public class PmsGoalTemplateService {
         return toResponse(template);
     }
 
-    /** Screen 2.4 "Save": replaces the competency selection, which must total 100. */
+    /** Screen 2.4 "Save": replaces the competency selection; when non-empty it must total 100. */
     @Transactional
-    public PmsGoalTemplateResponse saveCompetencies(UUID organisationId, UUID templateId,
+    public PmsGoalTemplateResponse saveCompetencies(String organisationId, UUID templateId,
                                                     PmsGoalTemplateCompetencyRequest request) {
         log.info("Saving competencies of goal template {}", templateId);
         PmsGoalTemplateEntity template = find(organisationId, templateId);
-        if (request.competencies().isEmpty()) {
-            throw DomainException.unprocessable("Select at least one competency.", "PMS_TEMPLATE_INCOMPLETE");
-        }
         Map<UUID, PmsCompetencyMasterEntity> competencies = new LinkedHashMap<>();
         BigDecimal total = BigDecimal.ZERO;
         for (PmsGoalTemplateCompetencyRequest.Item item : request.competencies()) {
@@ -247,7 +244,8 @@ public class PmsGoalTemplateService {
             competencies.put(competency.getId(), competency);
             total = total.add(item.weightage());
         }
-        if (total.subtract(HUNDRED).abs().compareTo(TOLERANCE) > 0) {
+        // An empty list clears the selection (guide §4.6); the 100% rule applies only when there are rows.
+        if (!request.competencies().isEmpty() && total.subtract(HUNDRED).abs().compareTo(TOLERANCE) > 0) {
             throw DomainException.unprocessable("Competency weightage must total 100 (got " + total + ").",
                     "PMS_TEMPLATE_INCOMPLETE");
         }
@@ -274,7 +272,7 @@ public class PmsGoalTemplateService {
 
     // ── internals ────────────────────────────────────────────────────────────
 
-    private PmsGoalTemplateEntity find(UUID organisationId, UUID templateId) {
+    private PmsGoalTemplateEntity find(String organisationId, UUID templateId) {
         return templateRepository.findByIdAndOrganisationId(templateId, organisationId)
                 .filter(t -> Boolean.TRUE.equals(t.getIsActive()))
                 .orElseThrow(() -> DomainException.notFound("Goal template not found", "PMS_TEMPLATE_NOT_FOUND"));

@@ -59,7 +59,7 @@ public class PmsRatingScaleController {
     }
 
     @PostMapping("/create/rating-scale")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_rating_scale")
     @Operation(summary = "Create a rating scale",
             description = "Creates a rating scale with its levels. Screen 2.10 only edits an existing scale, so "
                     + "this is how the first scale gets into the system.")
@@ -72,7 +72,7 @@ public class PmsRatingScaleController {
     }
 
     @PutMapping("/update/rating-scale/{scaleId}")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_rating_scale")
     @Operation(summary = "Save a rating scale (screen 2.10 Save Scale)",
             description = "Replaces the scale's name, status, default and show-definitions flags and syncs its "
                     + "levels by rating value. Setting is_default clears the default on the organisation's other "
