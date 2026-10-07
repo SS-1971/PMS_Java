@@ -71,7 +71,7 @@ public class PmsGoalTemplateController {
     }
 
     @PostMapping("/create/goal-template")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
     @Operation(summary = "Create a goal template (screen 2.2 Save and Next)",
             description = "Saves the template's basic info. The template starts as a draft and becomes active "
                     + "once its KRA/KPI and competency steps are saved complete; status=inactive is kept.")
@@ -97,7 +97,7 @@ public class PmsGoalTemplateController {
     }
 
     @PutMapping("/update/goal-template/{templateId}")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
     @Operation(summary = "Update goal template basic info (screen 2.2)",
             description = "Replaces the template's financial year, name, description, department, role, plant, "
                     + "effective date and status. Marking it active only sticks while the template is complete.")
@@ -111,7 +111,7 @@ public class PmsGoalTemplateController {
     }
 
     @PutMapping("/update/goal-template/{templateId}/kra-kpi")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
     @Operation(summary = "Save KRA and KPI configuration (screen 2.3 Save as Draft / Save and Next)",
             description = "Replaces the template's selected KRAs and KPIs with their weightage and target type, in "
                     + "one transaction. Each KPI must belong to its KRA. Unless save_as_draft is true, every KRA "
@@ -126,7 +126,7 @@ public class PmsGoalTemplateController {
     }
 
     @PutMapping("/update/goal-template/{templateId}/competencies")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
     @Operation(summary = "Save competency configuration (screen 2.4 Save)",
             description = "Replaces the template's competencies and weightages, which must total 100, in one "
                     + "transaction. A complete draft template becomes active.")

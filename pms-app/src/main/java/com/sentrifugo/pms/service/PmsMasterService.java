@@ -5,6 +5,10 @@ import com.sentrifugo.db.dto.PmsCompetencyMasterDTO;
 import com.sentrifugo.db.dto.PmsKpiMasterDTO;
 import com.sentrifugo.db.dto.PmsKraMasterDTO;
 import com.sentrifugo.db.entity.PmsCompetencyMasterEntity;
+import com.sentrifugo.db.entity.PmsStandardRatingLevelEntity;
+import com.sentrifugo.db.repository.PmsStandardRatingLevelRepository;
+import com.sentrifugo.pms.model.PmsStandardRatingLevelRequest;
+import com.sentrifugo.pms.model.PmsStandardRatingLevelResponse;
 import com.sentrifugo.db.entity.PmsKpiMasterEntity;
 import com.sentrifugo.db.entity.PmsKraMasterEntity;
 import com.sentrifugo.db.enums.PmsMasterStatus;
@@ -51,6 +55,7 @@ public class PmsMasterService {
     private final PmsKraMasterRepository kraRepository;
     private final PmsKpiMasterRepository kpiRepository;
     private final PmsCompetencyMasterRepository competencyRepository;
+    private final PmsStandardRatingLevelRepository standardLevelRepository;
     private final PmsGoalTemplateKraRepository templateKraRepository;
     private final PmsGoalTemplateKpiRepository templateKpiRepository;
     private final PmsGoalTemplateCompetencyRepository templateCompetencyRepository;
@@ -227,6 +232,61 @@ public class PmsMasterService {
         competencyRepository.save(competency);
     }
 
+    // ── Standard rating levels (master list used to build rating scales) ─────
+
+    @Transactional(readOnly = true)
+    public List<PmsStandardRatingLevelResponse> getStandardLevels(String organisationId) {
+        return standardLevelRepository.findByOrganisationIdAndIsActiveTrueOrderByCreatedDateAsc(organisationId)
+                .stream().map(this::toResponse).toList();
+    }
+
+    @Transactional
+    public PmsStandardRatingLevelResponse createStandardLevel(String organisationId,
+                                                              PmsStandardRatingLevelRequest request) {
+        log.info("Creating standard rating level for organisation {}", organisationId);
+        String label = request.label().trim();
+        if (standardLevelRepository.existsByOrganisationIdAndLabelIgnoreCaseAndIsActiveTrue(organisationId, label)) {
+            throw DomainException.conflict("A standard rating level named '" + label + "' already exists.",
+                    "PMS_STANDARD_LEVEL_DUPLICATE");
+        }
+        PmsStandardRatingLevelEntity level = PmsStandardRatingLevelEntity.builder()
+                .organisationId(organisationId)
+                .label(label)
+                .definition(blankToNull(request.definition()))
+                .colourCode(request.colourCode() == null ? "#9CA3AF" : request.colourCode().toUpperCase(Locale.ROOT))
+                .status(PmsMasterStatus.ACTIVE)
+                .isActive(true)
+                .build();
+        return toResponse(standardLevelRepository.save(level));
+    }
+
+    @Transactional
+    public PmsStandardRatingLevelResponse updateStandardLevel(String organisationId, UUID levelId,
+                                                              PmsStandardRatingLevelRequest request) {
+        log.info("Updating standard rating level {}", levelId);
+        PmsStandardRatingLevelEntity level = findStandardLevel(organisationId, levelId);
+        String label = request.label().trim();
+        if (standardLevelRepository.existsByOrganisationIdAndLabelIgnoreCaseAndIsActiveTrueAndIdNot(
+                organisationId, label, levelId)) {
+            throw DomainException.conflict("A standard rating level named '" + label + "' already exists.",
+                    "PMS_STANDARD_LEVEL_DUPLICATE");
+        }
+        level.setLabel(label);
+        level.setDefinition(blankToNull(request.definition()));
+        if (request.colourCode() != null) {
+            level.setColourCode(request.colourCode().toUpperCase(Locale.ROOT));
+        }
+        return toResponse(standardLevelRepository.save(level));
+    }
+
+    @Transactional
+    public void deleteStandardLevel(String organisationId, UUID levelId) {
+        log.info("Deleting standard rating level {}", levelId);
+        PmsStandardRatingLevelEntity level = findStandardLevel(organisationId, levelId);
+        level.setIsActive(false);
+        standardLevelRepository.save(level);
+    }
+
     // ── internals ────────────────────────────────────────────────────────────
 
     private PmsKraMasterEntity findKra(String organisationId, UUID kraId) {
@@ -247,6 +307,21 @@ public class PmsMasterService {
         return kpiRepository.findByIdAndOrganisationId(kpiId, organisationId)
                 .filter(k -> Boolean.TRUE.equals(k.getIsActive()))
                 .orElseThrow(() -> DomainException.notFound("KPI not found", "PMS_KPI_NOT_FOUND"));
+    }
+
+    private PmsStandardRatingLevelEntity findStandardLevel(String organisationId, UUID levelId) {
+        return standardLevelRepository.findByIdAndOrganisationId(levelId, organisationId)
+                .filter(l -> Boolean.TRUE.equals(l.getIsActive()))
+                .orElseThrow(() -> DomainException.notFound("Standard rating level not found",
+                        "PMS_STANDARD_LEVEL_NOT_FOUND"));
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private PmsStandardRatingLevelResponse toResponse(PmsStandardRatingLevelEntity l) {
+        return new PmsStandardRatingLevelResponse(l.getId(), l.getLabel(), l.getDefinition(), l.getColourCode());
     }
 
     private PmsCompetencyMasterEntity findCompetency(String organisationId, UUID competencyId) {

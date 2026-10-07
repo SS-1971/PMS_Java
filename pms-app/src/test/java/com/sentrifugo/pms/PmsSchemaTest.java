@@ -87,7 +87,8 @@ class PmsSchemaTest {
                 "pms_cycle", "pms_cycle_stage", "pms_cycle_applicability", "pms_cycle_plant", "pms_cycle_department",
                 "pms_cycle_employment_type", "pms_cycle_eligibility_run", "pms_cycle_notification",
                 "rating_scale", "rating_scale_level", "goal_template", "kra_master", "kpi_master",
-                "competency_master", "goal_template_kra", "goal_template_kpi", "goal_template_competency");
+                "competency_master", "standard_rating_level", "goal_template_kra", "goal_template_kpi",
+                "goal_template_competency", "goal_assignment", "goal_assignment_target");
     }
 
     @Test

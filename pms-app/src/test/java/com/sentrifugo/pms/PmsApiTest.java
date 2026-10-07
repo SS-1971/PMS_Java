@@ -51,8 +51,8 @@ class PmsApiTest {
                 {"user_id": "%s", "email": "u@example.com", "org_id": "%s", "is_super_admin": false,
                  "is_org_admin": false,
                  "permissions": {"performance_management": {"acl": "editor",
-                   "actions": {"create_resource": %s}, "action_acls": {}}}}
-                """.formatted(userId, orgId, canWrite);
+                   "actions": {"manage_pms_cycles": %s, "manage_goal_templates": %s, "manage_pms_masters": %s, "manage_rating_scale": %s}, "action_acls": {}}}}
+                """.formatted(userId, orgId, canWrite, canWrite, canWrite, canWrite);
     }
 
     @MockitoBean

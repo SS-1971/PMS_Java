@@ -2,6 +2,8 @@ package com.sentrifugo.pms.controller;
 
 import com.sentrifugo.common.web.ApiResponse;
 import com.sentrifugo.pms.model.PmsCompetencyRequest;
+import com.sentrifugo.pms.model.PmsStandardRatingLevelRequest;
+import com.sentrifugo.pms.model.PmsStandardRatingLevelResponse;
 import com.sentrifugo.pms.model.PmsCompetencyResponse;
 import com.sentrifugo.pms.model.PmsKpiRequest;
 import com.sentrifugo.pms.model.PmsKpiResponse;
@@ -54,7 +56,7 @@ public class PmsMasterController {
     }
 
     @PostMapping("/create/kra")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_pms_masters")
     @Operation(summary = "Add a KRA (screen 2.6)",
             description = "Adds a Key Result Area; names are unique per organisation (case-insensitive).")
     public ResponseEntity<ApiResponse<PmsKraResponse>> createKra(@AuthenticationPrincipal PmsUserPrincipal user,
@@ -65,7 +67,7 @@ public class PmsMasterController {
     }
 
     @PutMapping("/update/kra/{kraId}")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_pms_masters")
     @Operation(summary = "Edit a KRA (screen 2.5 edit action)",
             description = "Renames a KRA and/or changes its status.")
     public ResponseEntity<ApiResponse<PmsKraResponse>> updateKra(@AuthenticationPrincipal PmsUserPrincipal user,
@@ -77,7 +79,7 @@ public class PmsMasterController {
     }
 
     @DeleteMapping("/delete/kra/{kraId}")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_pms_masters")
     @Operation(summary = "Delete a KRA (screen 2.5 delete action)",
             description = "Removes a KRA from the master list; rejected while KPIs exist under it or a goal "
                     + "template uses it (409 PMS_KRA_IN_USE).")
@@ -109,7 +111,7 @@ public class PmsMasterController {
     }
 
     @PostMapping("/create/kpi")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_pms_masters")
     @Operation(summary = "Add a KPI (screen 2.8)",
             description = "Adds a KPI under an existing KRA of the organisation; names are unique per KRA.")
     public ResponseEntity<ApiResponse<PmsKpiResponse>> createKpi(@AuthenticationPrincipal PmsUserPrincipal user,
@@ -120,7 +122,7 @@ public class PmsMasterController {
     }
 
     @PutMapping("/update/kpi/{kpiId}")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_pms_masters")
     @Operation(summary = "Edit a KPI (screen 2.7 edit action)",
             description = "Replaces a KPI's KRA, name, unit, target type, expected outcome and evidence required.")
     public ResponseEntity<ApiResponse<PmsKpiResponse>> updateKpi(@AuthenticationPrincipal PmsUserPrincipal user,
@@ -132,7 +134,7 @@ public class PmsMasterController {
     }
 
     @DeleteMapping("/delete/kpi/{kpiId}")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_pms_masters")
     @Operation(summary = "Delete a KPI (screen 2.7 delete action)",
             description = "Removes a KPI from the master list; rejected while a goal template uses it "
                     + "(409 PMS_KPI_IN_USE).")
@@ -157,8 +159,54 @@ public class PmsMasterController {
                 String.format("Found %d competencies", competencies.size())));
     }
 
+    @GetMapping("/get/standard-rating-levels")
+    @Operation(summary = "List standard rating levels",
+            description = "Master list the rating-scale create screen picks its levels from.")
+    public ResponseEntity<ApiResponse<List<PmsStandardRatingLevelResponse>>> listStandardLevels(
+            @AuthenticationPrincipal PmsUserPrincipal user) {
+        List<PmsStandardRatingLevelResponse> levels = service.getStandardLevels(PmsPrincipals.organisationId(user));
+        return ResponseEntity.ok(ApiResponse.ok(levels, "Found " + levels.size() + " standard rating levels"));
+    }
+
+    @PostMapping("/create/standard-rating-level")
+    @RequirePermission(module = "performance_management", action = "manage_rating_scale")
+    @Operation(summary = "Add a standard rating level",
+            description = "Adds a level to the master list; labels are unique per organisation.")
+    public ResponseEntity<ApiResponse<PmsStandardRatingLevelResponse>> createStandardLevel(
+            @AuthenticationPrincipal PmsUserPrincipal user, @Valid @RequestBody PmsStandardRatingLevelRequest request) {
+        log.info("Creating standard rating level");
+        PmsStandardRatingLevelResponse level =
+                service.createStandardLevel(PmsPrincipals.organisationId(user), request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(level, "Standard rating level created successfully"));
+    }
+
+    @PutMapping("/update/standard-rating-level/{levelId}")
+    @RequirePermission(module = "performance_management", action = "manage_rating_scale")
+    @Operation(summary = "Edit a standard rating level",
+            description = "Changes a level's label, definition and/or colour.")
+    public ResponseEntity<ApiResponse<PmsStandardRatingLevelResponse>> updateStandardLevel(
+            @AuthenticationPrincipal PmsUserPrincipal user, @PathVariable UUID levelId,
+            @Valid @RequestBody PmsStandardRatingLevelRequest request) {
+        log.info("Updating standard rating level: {}", levelId);
+        PmsStandardRatingLevelResponse level =
+                service.updateStandardLevel(PmsPrincipals.organisationId(user), levelId, request);
+        return ResponseEntity.ok(ApiResponse.ok(level, "Standard rating level updated successfully"));
+    }
+
+    @DeleteMapping("/delete/standard-rating-level/{levelId}")
+    @RequirePermission(module = "performance_management", action = "manage_rating_scale")
+    @Operation(summary = "Delete a standard rating level",
+            description = "Removes a level from the master list. Existing rating scales keep their copy.")
+    public ResponseEntity<ApiResponse<Void>> deleteStandardLevel(@AuthenticationPrincipal PmsUserPrincipal user,
+                                                                 @PathVariable UUID levelId) {
+        log.info("Deleting standard rating level: {}", levelId);
+        service.deleteStandardLevel(PmsPrincipals.organisationId(user), levelId);
+        return ResponseEntity.ok(ApiResponse.ok("Standard rating level deleted successfully"));
+    }
+
     @PostMapping("/create/competency")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_pms_masters")
     @Operation(summary = "Add a competency",
             description = "Adds a competency; names are unique per organisation. Screen 2.9 has no add button, "
                     + "so this is how competencies get into the system.")
@@ -171,7 +219,7 @@ public class PmsMasterController {
     }
 
     @PutMapping("/update/competency/{competencyId}")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_pms_masters")
     @Operation(summary = "Edit a competency (screen 2.9 edit action)",
             description = "Changes a competency's name, category and/or status.")
     public ResponseEntity<ApiResponse<PmsCompetencyResponse>> updateCompetency(
@@ -184,7 +232,7 @@ public class PmsMasterController {
     }
 
     @DeleteMapping("/delete/competency/{competencyId}")
-    @RequirePermission(module = "performance_management", action = "create_resource")
+    @RequirePermission(module = "performance_management", action = "manage_pms_masters")
     @Operation(summary = "Delete a competency (screen 2.9 delete action)",
             description = "Removes a competency from the master list; rejected while a goal template uses it "
                     + "(409 PMS_COMPETENCY_IN_USE).")

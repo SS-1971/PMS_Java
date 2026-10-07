@@ -238,15 +238,12 @@ public class PmsGoalTemplateService {
         return toResponse(template);
     }
 
-    /** Screen 2.4 "Save": replaces the competency selection, which must total 100. */
+    /** Screen 2.4 "Save": replaces the competency selection; when non-empty it must total 100. */
     @Transactional
     public PmsGoalTemplateResponse saveCompetencies(String organisationId, UUID templateId,
                                                     PmsGoalTemplateCompetencyRequest request) {
         log.info("Saving competencies of goal template {}", templateId);
         PmsGoalTemplateEntity template = find(organisationId, templateId);
-        if (request.competencies().isEmpty()) {
-            throw DomainException.unprocessable("Select at least one competency.", "PMS_TEMPLATE_INCOMPLETE");
-        }
         Map<UUID, PmsCompetencyMasterEntity> competencies = new LinkedHashMap<>();
         BigDecimal total = BigDecimal.ZERO;
         for (PmsGoalTemplateCompetencyRequest.Item item : request.competencies()) {
@@ -261,7 +258,8 @@ public class PmsGoalTemplateService {
             competencies.put(competency.getId(), competency);
             total = total.add(item.weightage());
         }
-        if (total.subtract(HUNDRED).abs().compareTo(TOLERANCE) > 0) {
+        // An empty list clears the selection (guide §4.6); the 100% rule applies only when there are rows.
+        if (!request.competencies().isEmpty() && total.subtract(HUNDRED).abs().compareTo(TOLERANCE) > 0) {
             throw DomainException.unprocessable("Competency weightage must total 100 (got " + total + ").",
                     "PMS_TEMPLATE_INCOMPLETE");
         }
