@@ -4,6 +4,7 @@ import com.sentrifugo.db.entity.PmsGoalTemplateEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
+import java.util.List;
 import java.util.Optional;
 import com.sentrifugo.db.enums.PmsTemplateStatus;
 
@@ -19,4 +20,12 @@ public interface PmsGoalTemplateRepository extends JpaRepository<PmsGoalTemplate
     /** The active template a designation (role) follows for a financial year. */
     Optional<PmsGoalTemplateEntity> findFirstByOrganisationIdAndRoleIdAndFinancialYearAndStatus(
             String organisationId, String roleId, String financialYear, PmsTemplateStatus status);
+
+    /** Every (kept) template of an organisation for a financial year, used by the "copy template" feature. */
+    List<PmsGoalTemplateEntity> findByOrganisationIdAndFinancialYearAndIsActiveTrue(
+            String organisationId, String financialYear);
+
+    /** Whether a role already has a template (any status) in a financial year, so a copy can skip it. */
+    boolean existsByOrganisationIdAndRoleIdAndFinancialYearAndIsActiveTrue(
+            String organisationId, String roleId, String financialYear);
 }

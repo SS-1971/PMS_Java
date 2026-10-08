@@ -36,7 +36,6 @@
         <module>pms-db</module>
         <module>pms-security</module>
         <module>pms-integration</module>
-        <module>pms-messaging</module>
     </modules>
 
 </project>

@@ -12,8 +12,8 @@ import com.sentrifugo.db.repository.PmsGoalAssignmentRepository;
 import com.sentrifugo.db.repository.PmsGoalAssignmentTargetRepository;
 import com.sentrifugo.db.repository.PmsGoalTemplateKpiRepository;
 import com.sentrifugo.db.repository.PmsGoalTemplateRepository;
-import com.sentrifugo.pms.integration.IamEmployee;
-import com.sentrifugo.pms.integration.IamEmployeeClient;
+import com.sentrifugo.integration.model.IamEmployee;
+import com.sentrifugo.integration.IamEmployeeClient;
 import com.sentrifugo.pms.model.PmsApprovalActionRequest;
 import com.sentrifugo.pms.model.PmsApprovalItemResponse;
 import com.sentrifugo.pms.model.PmsChangeRequest;
@@ -32,7 +32,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -63,7 +62,7 @@ public class PmsGoalAssignmentService {
     /** Screen 3.1 "My Team": the caller's direct reports with their goal status. */
     @Transactional(readOnly = true)
     public List<PmsTeamMemberResponse> getTeam(PmsUserPrincipal manager, String financialYear) {
-        List<IamEmployee> reports = iam.directReports(manager.accessToken(), manager.id());
+        List<IamEmployee> reports = iam.directReports(manager.organisationId(), manager.id());
         Map<String, PmsAssignmentStatus> statusByEmployee = new HashMap<>();
         if (!reports.isEmpty()) {
             List<String> ids = reports.stream().map(IamEmployee::userId).toList();
@@ -324,7 +323,7 @@ public class PmsGoalAssignmentService {
 
     /** Only the caller's own direct reports may be read or changed. */
     private IamEmployee requireTeamMember(PmsUserPrincipal manager, String employeeUserId) {
-        return iam.directReports(manager.accessToken(), manager.id()).stream()
+        return iam.directReports(manager.organisationId(), manager.id()).stream()
                 .filter(e -> employeeUserId.equals(e.userId()))
                 .findFirst()
                 .orElseThrow(() -> new DomainException("This employee is not in your team.",

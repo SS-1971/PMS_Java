@@ -2,6 +2,9 @@ package com.sentrifugo.pms.controller;
 
 import com.sentrifugo.common.web.ApiResponse;
 import com.sentrifugo.pms.model.PmsGoalTemplateCompetencyRequest;
+import com.sentrifugo.pms.model.PmsGoalTemplateCopyPreviewResponse;
+import com.sentrifugo.pms.model.PmsGoalTemplateCopyRequest;
+import com.sentrifugo.pms.model.PmsGoalTemplateCopyResultResponse;
 import com.sentrifugo.pms.model.PmsGoalTemplateKraKpiRequest;
 import com.sentrifugo.pms.model.PmsGoalTemplateListResponse;
 import com.sentrifugo.pms.model.PmsGoalTemplateRequest;
@@ -137,5 +140,33 @@ public class PmsGoalTemplateController {
         PmsGoalTemplateResponse template =
                 service.saveCompetencies(PmsPrincipals.organisationId(user), templateId, request);
         return ResponseEntity.ok(ApiResponse.ok(template, "Competency configuration saved successfully"));
+    }
+
+    @GetMapping("/get/copy-preview")
+    @Operation(summary = "Preview a year-to-year template copy (screen 2.2 \"Copy Template\")",
+            description = "Counts the previous year's templates and how many of their roles already have a "
+                    + "template in the target year and would be skipped.")
+    public ResponseEntity<ApiResponse<PmsGoalTemplateCopyPreviewResponse>> getCopyPreview(
+            @AuthenticationPrincipal PmsUserPrincipal user,
+            @RequestParam("previous_year") String previousYear,
+            @RequestParam("target_year") String targetYear) {
+        log.info("Previewing goal template copy from {} to {}", previousYear, targetYear);
+        PmsGoalTemplateCopyPreviewResponse preview =
+                service.getCopyPreview(PmsPrincipals.organisationId(user), previousYear, targetYear);
+        return ResponseEntity.ok(ApiResponse.ok(preview, "Copy preview computed successfully"));
+    }
+
+    @PostMapping("/copy")
+    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
+    @Operation(summary = "Copy every template of a year into another (screen 2.2 \"Copy Template\")",
+            description = "Copies every template of previous_year into target_year as a draft, with its KRAs, "
+                    + "KPIs and competencies. A role that already has a template in the target year is skipped.")
+    public ResponseEntity<ApiResponse<PmsGoalTemplateCopyResultResponse>> copyTemplates(
+            @AuthenticationPrincipal PmsUserPrincipal user, @Valid @RequestBody PmsGoalTemplateCopyRequest request) {
+        log.info("Copying goal templates from {} to {}", request.previousYear(), request.targetYear());
+        PmsGoalTemplateCopyResultResponse result = service.copyTemplates(PmsPrincipals.organisationId(user),
+                request.previousYear(), request.targetYear());
+        return ResponseEntity.ok(ApiResponse.ok(result,
+                String.format("Copied %d templates, skipped %d", result.copied(), result.skipped())));
     }
 }

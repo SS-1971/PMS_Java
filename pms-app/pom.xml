@@ -46,12 +46,6 @@
             <groupId>com.sentrifugo</groupId>
             <artifactId>pms-integration</artifactId>
             <version>${project.version}</version>
-
-        </dependency>
-        <dependency>
-            <groupId>com.sentrifugo</groupId>
-            <artifactId>pms-messaging</artifactId>
-            <version>${project.version}</version>
         </dependency>
 
         <!-- Swagger UI / OpenAPI docs (bearer scheme declared in OpenApiConfig) -->

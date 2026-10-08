@@ -28,6 +28,8 @@ import com.sentrifugo.db.repository.PmsKpiMasterRepository;
 import com.sentrifugo.db.repository.PmsKraMasterRepository;
 import com.sentrifugo.db.util.PmsGoalTemplateSpecifications;
 import com.sentrifugo.pms.model.PmsGoalTemplateCompetencyRequest;
+import com.sentrifugo.pms.model.PmsGoalTemplateCopyPreviewResponse;
+import com.sentrifugo.pms.model.PmsGoalTemplateCopyResultResponse;
 import com.sentrifugo.pms.model.PmsGoalTemplateKraKpiRequest;
 import com.sentrifugo.pms.model.PmsGoalTemplateListResponse;
 import com.sentrifugo.pms.model.PmsGoalTemplateRequest;
@@ -282,6 +284,91 @@ public class PmsGoalTemplateService {
             templateRepository.save(template);
         }
         return toResponse(template);
+    }
+
+    /** "Copy Template" preview: how many templates a previous year has, and how many of their roles already have
+     * one in the target year and would be skipped. */
+    @Transactional(readOnly = true)
+    public PmsGoalTemplateCopyPreviewResponse getCopyPreview(String organisationId, String previousYear,
+                                                             String targetYear) {
+        validateCopyYears(previousYear, targetYear);
+        List<PmsGoalTemplateEntity> source =
+                templateRepository.findByOrganisationIdAndFinancialYearAndIsActiveTrue(organisationId, previousYear);
+        long alreadyInTarget = source.stream()
+                .filter(t -> templateRepository.existsByOrganisationIdAndRoleIdAndFinancialYearAndIsActiveTrue(
+                        organisationId, t.getRoleId(), targetYear))
+                .count();
+        return new PmsGoalTemplateCopyPreviewResponse(source.size(), (int) alreadyInTarget);
+    }
+
+    /** Copies every template of {@code previousYear} into {@code targetYear} as a draft, with its KRAs, KPIs and
+     * competencies. A role that already has a template in the target year is skipped. */
+    @Transactional
+    public PmsGoalTemplateCopyResultResponse copyTemplates(String organisationId, String previousYear,
+                                                           String targetYear) {
+        validateCopyYears(previousYear, targetYear);
+        log.info("Copying goal templates of organisation {} from FY {} to FY {}", organisationId, previousYear,
+                targetYear);
+        List<PmsGoalTemplateEntity> source =
+                templateRepository.findByOrganisationIdAndFinancialYearAndIsActiveTrue(organisationId, previousYear);
+        int yearShift = startYear(targetYear) - startYear(previousYear);
+        int copied = 0;
+        int skipped = 0;
+        for (PmsGoalTemplateEntity src : source) {
+            if (templateRepository.existsByOrganisationIdAndRoleIdAndFinancialYearAndIsActiveTrue(organisationId,
+                    src.getRoleId(), targetYear)) {
+                skipped++;
+                continue;
+            }
+            PmsGoalTemplateEntity copy = templateRepository.save(PmsGoalTemplateEntity.builder()
+                    .organisationId(organisationId)
+                    .financialYear(targetYear)
+                    .templateName(src.getTemplateName())
+                    .description(src.getDescription())
+                    .departmentId(src.getDepartmentId())
+                    .roleId(src.getRoleId())
+                    .plantId(src.getPlantId())
+                    .effectiveFrom(src.getEffectiveFrom().plusYears(yearShift))
+                    .status(PmsTemplateStatus.DRAFT)
+                    .build());
+
+            for (PmsGoalTemplateKraEntity row : templateKraRepository.findByTemplateIdOrderByDisplayOrderAsc(
+                    src.getId())) {
+                templateKraRepository.save(PmsGoalTemplateKraEntity.builder()
+                        .template(copy).kra(row.getKra()).displayOrder(row.getDisplayOrder()).build());
+            }
+            for (PmsGoalTemplateKpiEntity row : templateKpiRepository.findByTemplateIdOrderByDisplayOrderAsc(
+                    src.getId())) {
+                templateKpiRepository.save(PmsGoalTemplateKpiEntity.builder()
+                        .template(copy).kra(row.getKra()).kpi(row.getKpi()).weightage(row.getWeightage())
+                        .targetType(row.getTargetType()).displayOrder(row.getDisplayOrder()).build());
+            }
+            for (PmsGoalTemplateCompetencyEntity row : templateCompetencyRepository
+                    .findByTemplateIdOrderByDisplayOrderAsc(src.getId())) {
+                templateCompetencyRepository.save(PmsGoalTemplateCompetencyEntity.builder()
+                        .template(copy).competency(row.getCompetency()).weightage(row.getWeightage())
+                        .displayOrder(row.getDisplayOrder()).build());
+            }
+            copied++;
+        }
+        return new PmsGoalTemplateCopyResultResponse(copied, skipped);
+    }
+
+    private static void validateCopyYears(String previousYear, String targetYear) {
+        if (previousYear == null || previousYear.isBlank() || targetYear == null || targetYear.isBlank()) {
+            throw DomainException.unprocessable("previous_year and target_year are required", "VALIDATION_ERROR");
+        }
+        if (previousYear.trim().equalsIgnoreCase(targetYear.trim())) {
+            throw DomainException.unprocessable("previous_year and target_year must differ", "VALIDATION_ERROR");
+        }
+    }
+
+    private static int startYear(String financialYear) {
+        try {
+            return Integer.parseInt(financialYear.trim().substring(0, 4));
+        } catch (RuntimeException e) {
+            throw DomainException.unprocessable("financial_year must start with a 4-digit year", "VALIDATION_ERROR");
+        }
     }
 
     // ── internals ────────────────────────────────────────────────────────────

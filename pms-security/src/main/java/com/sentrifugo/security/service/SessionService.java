@@ -39,7 +39,11 @@ public class SessionService {
         try {
             raw = redis.opsForValue().get(SESSION_PREFIX + accessToken);
         } catch (RuntimeException e) {
-            log.warn("Valkey session lookup failed: {}", e.getMessage());
+            // Full stack trace on purpose: "Unable to connect to Redis" is Spring
+            // Data Redis's own wrapper message, not the real cause -- the actual
+            // reason (connection refused, timeout, DNS, TLS mismatch...) is in the
+            // Lettuce exception chain underneath it, which e.getMessage() alone hides.
+            log.warn("Valkey session lookup failed", e);
             throw new AuthenticationServiceException("Session store unavailable", e);
         }
         if (raw == null || raw.isBlank()) {
