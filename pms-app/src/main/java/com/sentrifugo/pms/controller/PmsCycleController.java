@@ -96,7 +96,7 @@ public class PmsCycleController {
     }
 
     @PostMapping("/create/cycle")
-    @RequirePermission(module = "performance_management", action = "manage_pms_cycles")
+    @RequirePermission(module = "performance_management", action = "pms_cycle")
     @Operation(summary = "Create a PMS cycle (screen 1.2 Next)",
             description = "Creates a DRAFT appraisal cycle with a server-generated cycle code "
                     + "(PMS-{FYstart yy}{FYend yy}-{A|M|C}). stages, applicability and finalize are optional and "
@@ -110,7 +110,7 @@ public class PmsCycleController {
     }
 
     @PutMapping("/update/cycle/{cycleId}")
-    @RequirePermission(module = "performance_management", action = "manage_pms_cycles")
+    @RequirePermission(module = "performance_management", action = "pms_cycle")
     @Operation(summary = "Update a PMS cycle (screens 1.2-1.5 Next / Previous)",
             description = "Saves the basic details and any supplied stages (1.3), applicability (1.4) and finalize "
                     + "settings (1.5) of a DRAFT or ACTIVE cycle; a supplied list replaces the stored one, an "
@@ -124,7 +124,7 @@ public class PmsCycleController {
     }
 
     @PostMapping("/publish/cycle/{cycleId}")
-    @RequirePermission(module = "performance_management", action = "manage_pms_cycles")
+    @RequirePermission(module = "performance_management", action = "pms_cycle")
     @Operation(summary = "Publish a PMS cycle (screen 1.5 Publish Cycle)",
             description = "Moves a complete DRAFT cycle to ACTIVE and stamps the publish time. Requires an active "
                     + "rating scale, plants, employment types, departments (unless all), minimum service, the "
@@ -151,7 +151,7 @@ public class PmsCycleController {
     }
 
     @PostMapping("/cancel/cycle/{cycleId}")
-    @RequirePermission(module = "performance_management", action = "manage_pms_cycles")
+    @RequirePermission(module = "performance_management", action = "pms_cycle")
     @Operation(summary = "Cancel a PMS cycle",
             description = "Cancels a DRAFT or ACTIVE cycle. CLOSED and CANCELLED cycles return "
                     + "409 PMS_CYCLE_NOT_CANCELLABLE.")

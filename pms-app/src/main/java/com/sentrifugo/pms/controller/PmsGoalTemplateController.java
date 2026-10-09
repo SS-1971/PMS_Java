@@ -74,7 +74,7 @@ public class PmsGoalTemplateController {
     }
 
     @PostMapping("/create/goal-template")
-    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
+    @RequirePermission(module = "performance_management", action = "goal_template")
     @Operation(summary = "Create a goal template (screen 2.2 Save and Next)",
             description = "Saves the template's basic info. The template starts as a draft and becomes active "
                     + "once its KRA/KPI and competency steps are saved complete; status=inactive is kept.")
@@ -88,7 +88,7 @@ public class PmsGoalTemplateController {
     }
 
     @DeleteMapping("/delete/goal-template/{templateId}")
-    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
+    @RequirePermission(module = "performance_management", action = "goal_template")
     @Operation(summary = "Delete a draft goal template (screen 2.2)",
             description = "Deletes a template that is still a draft, with its KRA, KPI and competency rows. "
                     + "Active or inactive templates cannot be deleted.")
@@ -100,7 +100,7 @@ public class PmsGoalTemplateController {
     }
 
     @PutMapping("/update/goal-template/{templateId}")
-    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
+    @RequirePermission(module = "performance_management", action = "goal_template")
     @Operation(summary = "Update goal template basic info (screen 2.2)",
             description = "Replaces the template's financial year, name, description, department, role, plant, "
                     + "effective date and status. Marking it active only sticks while the template is complete.")
@@ -114,7 +114,7 @@ public class PmsGoalTemplateController {
     }
 
     @PutMapping("/update/goal-template/{templateId}/kra-kpi")
-    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
+    @RequirePermission(module = "performance_management", action = "goal_template")
     @Operation(summary = "Save KRA and KPI configuration (screen 2.3 Save as Draft / Save and Next)",
             description = "Replaces the template's selected KRAs and KPIs with their weightage and target type, in "
                     + "one transaction. Each KPI must belong to its KRA. Unless save_as_draft is true, every KRA "
@@ -129,7 +129,7 @@ public class PmsGoalTemplateController {
     }
 
     @PutMapping("/update/goal-template/{templateId}/competencies")
-    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
+    @RequirePermission(module = "performance_management", action = "goal_template")
     @Operation(summary = "Save competency configuration (screen 2.4 Save)",
             description = "Replaces the template's competencies and weightages, which must total 100, in one "
                     + "transaction. A complete draft template becomes active.")
@@ -157,7 +157,7 @@ public class PmsGoalTemplateController {
     }
 
     @PostMapping("/copy")
-    @RequirePermission(module = "performance_management", action = "manage_goal_templates")
+    @RequirePermission(module = "performance_management", action = "goal_template")
     @Operation(summary = "Copy every template of a year into another (screen 2.2 \"Copy Template\")",
             description = "Copies every template of previous_year into target_year as a draft, with its KRAs, "
                     + "KPIs and competencies. A role that already has a template in the target year is skipped.")

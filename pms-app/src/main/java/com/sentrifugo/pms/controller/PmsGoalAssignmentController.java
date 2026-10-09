@@ -34,12 +34,16 @@ import java.util.List;
 public class PmsGoalAssignmentController {
 
     private static final String MODULE = "performance_management";
-    private static final String ACTION = "manage_team_goals";
+    // Codes below match IAM's seeded permission catalog (performance_management
+    // module) exactly — see scripts/seed_permissions.py in Sentrifugo-IAM-Admin-BE.
+    private static final String ACTION_TEAM_GOALS = "team_goals";
+    private static final String ACTION_MY_GOALS = "my_goals";
+    private static final String ACTION_GOAL_APPROVAL = "goal_approval";
 
     private final PmsGoalAssignmentService service;
 
     @GetMapping("/get/team")
-    @RequirePermission(module = MODULE, action = ACTION)
+    @RequirePermission(module = MODULE, action = ACTION_TEAM_GOALS)
     @Operation(summary = "My team (screen 3.1)",
             description = "The caller's direct reports, from IAM, with their goal status for the financial year.")
     public ResponseEntity<ApiResponse<List<PmsTeamMemberResponse>>> getTeam(
@@ -50,7 +54,7 @@ public class PmsGoalAssignmentController {
     }
 
     @GetMapping("/get/employee-targets")
-    @RequirePermission(module = MODULE, action = ACTION)
+    @RequirePermission(module = MODULE, action = ACTION_TEAM_GOALS)
     @Operation(summary = "Employee targets (screens 3.2 and 3.3)",
             description = "The employee's template KPIs with the weights and targets saved so far.")
     public ResponseEntity<ApiResponse<PmsEmployeeTargetsResponse>> getEmployeeTargets(
@@ -62,7 +66,7 @@ public class PmsGoalAssignmentController {
     }
 
     @PutMapping("/update/employee-targets")
-    @RequirePermission(module = MODULE, action = ACTION)
+    @RequirePermission(module = MODULE, action = ACTION_TEAM_GOALS)
     @Operation(summary = "Save draft (screen 3.3)",
             description = "Stores the weights and targets as given. Incomplete drafts are allowed.")
     public ResponseEntity<ApiResponse<PmsEmployeeTargetsResponse>> saveDraft(
@@ -72,7 +76,7 @@ public class PmsGoalAssignmentController {
     }
 
     @PostMapping("/send")
-    @RequirePermission(module = MODULE, action = ACTION)
+    @RequirePermission(module = MODULE, action = ACTION_TEAM_GOALS)
     @Operation(summary = "Save and send for acknowledgement (screen 3.5)",
             description = "Refuses with 422 PMS_TARGETS_INVALID unless the targets validate; otherwise saves them "
                     + "and sends them to the employee.")
@@ -85,7 +89,7 @@ public class PmsGoalAssignmentController {
     // ── Employee (4.1 - 4.3) ─────────────────────────────────────────────────
 
     @GetMapping("/get/my-goals")
-    @RequirePermission(module = MODULE, action = "manage_own_goals")
+    @RequirePermission(module = MODULE, action = ACTION_MY_GOALS)
     @Operation(summary = "My goals (screen 4.1)", description = "The signed-in employee's own targets for the year.")
     public ResponseEntity<ApiResponse<PmsEmployeeTargetsResponse>> myGoals(
             @AuthenticationPrincipal PmsUserPrincipal user,
@@ -94,7 +98,7 @@ public class PmsGoalAssignmentController {
     }
 
     @PostMapping("/acknowledge")
-    @RequirePermission(module = MODULE, action = "manage_own_goals")
+    @RequirePermission(module = MODULE, action = ACTION_MY_GOALS)
     @Operation(summary = "Acknowledge goals (screen 4.3)",
             description = "The employee accepts the goals that were sent to them.")
     public ResponseEntity<ApiResponse<PmsEmployeeTargetsResponse>> acknowledge(
@@ -103,7 +107,7 @@ public class PmsGoalAssignmentController {
     }
 
     @PostMapping("/request-change")
-    @RequirePermission(module = MODULE, action = "manage_own_goals")
+    @RequirePermission(module = MODULE, action = ACTION_MY_GOALS)
     @Operation(summary = "Request a change (screen 4.2)",
             description = "The employee asks the manager to revise one target.")
     public ResponseEntity<ApiResponse<PmsEmployeeTargetsResponse>> requestChange(
@@ -114,7 +118,7 @@ public class PmsGoalAssignmentController {
     // ── HOD (5.1 - 5.2) ──────────────────────────────────────────────────────
 
     @GetMapping("/get/approvals")
-    @RequirePermission(module = MODULE, action = "manage_hod_goal_settings")
+    @RequirePermission(module = MODULE, action = ACTION_GOAL_APPROVAL)
     @Operation(summary = "Goals awaiting HOD approval (screen 5.1)")
     public ResponseEntity<ApiResponse<List<PmsApprovalItemResponse>>> approvals(
             @AuthenticationPrincipal PmsUserPrincipal user,
@@ -124,7 +128,7 @@ public class PmsGoalAssignmentController {
     }
 
     @PostMapping("/approve")
-    @RequirePermission(module = MODULE, action = "manage_hod_goal_settings")
+    @RequirePermission(module = MODULE, action = ACTION_GOAL_APPROVAL)
     @Operation(summary = "Approve goals (screen 5.2)")
     public ResponseEntity<ApiResponse<PmsEmployeeTargetsResponse>> approve(
             @AuthenticationPrincipal PmsUserPrincipal user, @Valid @RequestBody PmsApprovalActionRequest request) {
@@ -132,7 +136,7 @@ public class PmsGoalAssignmentController {
     }
 
     @PostMapping("/return")
-    @RequirePermission(module = MODULE, action = "manage_hod_goal_settings")
+    @RequirePermission(module = MODULE, action = ACTION_GOAL_APPROVAL)
     @Operation(summary = "Return goals to the manager (screen 5.2)")
     public ResponseEntity<ApiResponse<PmsEmployeeTargetsResponse>> returnToManager(
             @AuthenticationPrincipal PmsUserPrincipal user, @Valid @RequestBody PmsApprovalActionRequest request) {
@@ -140,7 +144,7 @@ public class PmsGoalAssignmentController {
     }
 
     @PostMapping("/validate")
-    @RequirePermission(module = MODULE, action = ACTION)
+    @RequirePermission(module = MODULE, action = ACTION_TEAM_GOALS)
     @Operation(summary = "Validate targets (screen 3.4)",
             description = "Checks weightage totals 100 and every KPI has a numeric target. Writes nothing.")
     public ResponseEntity<ApiResponse<PmsTargetValidationResponse>> validate(
