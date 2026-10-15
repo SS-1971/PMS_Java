@@ -48,6 +48,10 @@ public class PmsCycleDTO extends BaseDTO {
 
     private Boolean notifyHr;
 
+    private Boolean notifyGp;
+
+    private UUID approvalWorkflowId;
+
     private Integer currentStep;
 
     private Integer completedStep;

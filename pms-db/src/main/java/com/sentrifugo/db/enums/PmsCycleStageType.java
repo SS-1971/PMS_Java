@@ -9,5 +9,9 @@ public enum PmsCycleStageType {
     SELF_APPRAISAL,
     MANAGER_APPRAISAL,
     HOD_REVIEW,
-    CALIBRATION_FINAL_APPROVAL
+    /** Plant HR / Corporate HR rate the HR competencies. */
+    HR_COMPETENCY_RATING,
+    CALIBRATION_FINAL_APPROVAL,
+    /** Approval and publish by GP. */
+    APPROVAL_PUBLISH
 }

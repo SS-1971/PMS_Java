@@ -250,6 +250,7 @@ public class PmsGoalTemplateService {
         PmsGoalTemplateEntity template = find(organisationId, templateId);
         Map<UUID, PmsCompetencyMasterEntity> competencies = new LinkedHashMap<>();
         BigDecimal total = BigDecimal.ZERO;
+        boolean unweighted = false;
         for (PmsGoalTemplateCompetencyRequest.Item item : request.competencies()) {
             if (competencies.containsKey(item.competencyId())) {
                 throw DomainException.unprocessable("Each competency may only be added once.", "VALIDATION_ERROR");
@@ -260,7 +261,23 @@ public class PmsGoalTemplateService {
                     .orElseThrow(() -> DomainException.unprocessable("competency_id " + item.competencyId()
                             + " does not refer to an active competency", "PMS_COMPETENCY_NOT_FOUND"));
             competencies.put(competency.getId(), competency);
-            total = total.add(item.weightage());
+            if (item.weightage() == null) {
+                unweighted = true;
+            } else {
+                total = total.add(item.weightage());
+            }
+        }
+        // No weights typed (the mockup has no weight column): share 100 equally, the last one takes the rest.
+        List<BigDecimal> weights = new java.util.ArrayList<>();
+        if (unweighted) {
+            int n = request.competencies().size();
+            BigDecimal each = HUNDRED.divide(BigDecimal.valueOf(n), 2, java.math.RoundingMode.DOWN);
+            for (int i = 0; i < n; i++) {
+                weights.add(i == n - 1 ? HUNDRED.subtract(each.multiply(BigDecimal.valueOf(n - 1L))) : each);
+            }
+            total = HUNDRED;
+        } else {
+            request.competencies().forEach(i -> weights.add(i.weightage()));
         }
         // An empty list clears the selection (guide §4.6); the 100% rule applies only when there are rows.
         if (!request.competencies().isEmpty() && total.subtract(HUNDRED).abs().compareTo(TOLERANCE) > 0) {
@@ -273,7 +290,8 @@ public class PmsGoalTemplateService {
         int order = 0;
         for (PmsGoalTemplateCompetencyRequest.Item item : request.competencies()) {
             PmsGoalTemplateCompetencyEntity row = templateCompetencyMapper.toEntity(
-                    PmsGoalTemplateCompetencyDTO.builder().weightage(item.weightage()).displayOrder(order++).build());
+                    PmsGoalTemplateCompetencyDTO.builder().weightage(weights.get(order)).displayOrder(order++)
+                            .build());
             row.setTemplate(template);
             row.setCompetency(competencies.get(item.competencyId()));
             templateCompetencyRepository.save(row);

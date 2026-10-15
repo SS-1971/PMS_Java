@@ -11,6 +11,7 @@ import com.sentrifugo.db.entity.PmsCycleEntity;
 import com.sentrifugo.db.entity.PmsCyclePlantEntity;
 import com.sentrifugo.db.entity.PmsCycleStageEntity;
 import com.sentrifugo.db.enums.PmsCycleStageType;
+import com.sentrifugo.db.enums.PmsNotificationAudience;
 import com.sentrifugo.db.enums.PmsCycleStatus;
 import com.sentrifugo.db.enums.PmsCycleType;
 import com.sentrifugo.db.enums.PmsEmploymentScope;
@@ -77,6 +78,8 @@ public class PmsCycleService {
     private final PmsCycleDepartmentRepository departmentRepository;
     private final PmsCycleEmploymentTypeRepository employmentTypeRepository;
     private final PmsCycleNotificationRepository notificationRepository;
+    private final PmsApprovalWorkflowService workflowService;
+    private final PmsNotificationService notificationService;
     private final PmsCycleEligibilityRunRepository eligibilityRunRepository;
     private final PmsRatingScaleRepository ratingScaleRepository;
     private final PmsCycleMapper cycleMapper;
@@ -146,6 +149,7 @@ public class PmsCycleService {
         validateStages(request.stages());
         PmsCycleRequest.Finalize settings = request.finalizeSettings();
         assertRatingScaleUsable(organisationId, settings == null ? null : settings.ratingScaleId());
+        workflowService.requireUsable(organisationId, settings == null ? null : settings.approvalWorkflowId());
 
         // Defaults are filled in here because the entity columns are NOT NULL and a null in the DTO would be
         // copied straight onto the entity.
@@ -160,6 +164,8 @@ public class PmsCycleService {
                 .notifyEmployees(flag(settings == null ? null : settings.notifyEmployees()))
                 .notifyHod(flag(settings == null ? null : settings.notifyHod()))
                 .notifyHr(flag(settings == null ? null : settings.notifyHr()))
+                .notifyGp(flag(settings == null ? null : settings.notifyGp()))
+                .approvalWorkflowId(settings == null ? null : settings.approvalWorkflowId())
                 .currentStep(request.currentStep() == null ? 1 : request.currentStep())
                 .completedStep(request.completedStep() == null ? 0 : request.completedStep())
                 .build();
@@ -187,6 +193,7 @@ public class PmsCycleService {
         validateStages(request.stages());
         PmsCycleRequest.Finalize settings = request.finalizeSettings();
         assertRatingScaleUsable(organisationId, settings == null ? null : settings.ratingScaleId());
+        workflowService.requireUsable(organisationId, settings == null ? null : settings.approvalWorkflowId());
 
         // Only the editable fields are set; the mapper ignores nulls, so id, organisation, cycle code, status and
         // audit columns can never be touched through this path.
@@ -201,13 +208,25 @@ public class PmsCycleService {
                 .notifyEmployees(settings == null ? null : settings.notifyEmployees())
                 .notifyHod(settings == null ? null : settings.notifyHod())
                 .notifyHr(settings == null ? null : settings.notifyHr())
+                .notifyGp(settings == null ? null : settings.notifyGp())
+                .approvalWorkflowId(settings == null ? null : settings.approvalWorkflowId())
                 .currentStep(request.currentStep())
                 .completedStep(request.completedStep())
                 .build();
+        // On a live cycle, an audience ticked now that was not ticked before is notified (once).
+        Set<PmsNotificationAudience> before = ticked(cycle);
+        boolean live = cycle.getStatus() == PmsCycleStatus.ACTIVE;
         cycleMapper.updateEntityFromDto(dto, cycle);
         cycle = cycleRepository.save(cycle);
 
         saveChildren(cycle, request);
+        if (live) {
+            Set<PmsNotificationAudience> added = ticked(cycle);
+            added.removeAll(before);
+            if (!added.isEmpty()) {
+                notificationService.notifyCycleLive(cycle, added);
+            }
+        }
         return toResponse(cycle);
     }
 
@@ -227,7 +246,10 @@ public class PmsCycleService {
         cycle.setCurrentStep(4);
         cycle.setCompletedStep(4);
         PmsCycleEntity saved = cycleRepository.save(cycle);
-        log.warn("PMS cycle {} published; the eligibility run and notifications are not implemented yet", cycleId);
+        // Every audience ticked on screen 1.5 gets a bell notification.
+        notificationService.notifyCycleLive(saved, ticked(saved));
+        log.info("PMS cycle {} published and its audiences notified; the eligibility run is not implemented yet",
+                cycleId);
         return toActivation(saved);
     }
 
@@ -336,6 +358,18 @@ public class PmsCycleService {
         return parseType(basic.type());
     }
 
+    /** The timeline of screen 1.3: every one of these needs dates before a cycle can be published. */
+    private static final List<PmsCycleStageType> REQUIRED_STAGES = List.of(
+            PmsCycleStageType.GOAL_SETTING,
+            PmsCycleStageType.EMPLOYEE_ACKNOWLEDGEMENT,
+            PmsCycleStageType.HOD_APPROVAL,
+            PmsCycleStageType.SELF_APPRAISAL,
+            PmsCycleStageType.MANAGER_APPRAISAL,
+            PmsCycleStageType.HOD_REVIEW,
+            PmsCycleStageType.HR_COMPETENCY_RATING,
+            PmsCycleStageType.CALIBRATION_FINAL_APPROVAL,
+            PmsCycleStageType.APPROVAL_PUBLISH);
+
     private void validateStages(List<PmsCycleRequest.Stage> stages) {
         if (stages == null) {
             return;
@@ -416,7 +450,7 @@ public class PmsCycleService {
         stageRepository.findByCycleId(id).stream()
                 .filter(s -> s.getStartDate() != null && s.getEndDate() != null)
                 .forEach(s -> complete.add(s.getStage()));
-        for (PmsCycleStageType stage : PmsCycleStageType.values()) {
+        for (PmsCycleStageType stage : REQUIRED_STAGES) {
             if (!complete.contains(stage)) {
                 problems.add("stage " + wire(stage) + " needs both a start and end date");
             }
@@ -541,7 +575,8 @@ public class PmsCycleService {
                         dto.getPeriodStart(), dto.getPeriodEnd()),
                 stages, applicability,
                 new PmsCycleResponse.Finalize(dto.getRatingScaleId(), dto.getNotifyManagers(),
-                        dto.getNotifyEmployees(), dto.getNotifyHod(), dto.getNotifyHr()),
+                        dto.getNotifyEmployees(), dto.getNotifyHod(), dto.getNotifyHr(), dto.getNotifyGp(),
+                        dto.getApprovalWorkflowId()),
                 dto.getCurrentStep(), dto.getCompletedStep());
     }
 
@@ -559,6 +594,27 @@ public class PmsCycleService {
                         .orElse(null);
         return new PmsCycleActivationResponse(toResponse(cycle), toDate(cycle.getPublishedOn()), notifications,
                 eligibility);
+    }
+
+    /** The audiences switched on for the cycle on screen 1.5. */
+    private static Set<PmsNotificationAudience> ticked(PmsCycleEntity cycle) {
+        Set<PmsNotificationAudience> out = EnumSet.noneOf(PmsNotificationAudience.class);
+        if (Boolean.TRUE.equals(cycle.getNotifyEmployees())) {
+            out.add(PmsNotificationAudience.EMPLOYEES);
+        }
+        if (Boolean.TRUE.equals(cycle.getNotifyManagers())) {
+            out.add(PmsNotificationAudience.REPORTING_MANAGERS);
+        }
+        if (Boolean.TRUE.equals(cycle.getNotifyHod())) {
+            out.add(PmsNotificationAudience.HOD_REVIEWERS);
+        }
+        if (Boolean.TRUE.equals(cycle.getNotifyHr())) {
+            out.add(PmsNotificationAudience.HR);
+        }
+        if (Boolean.TRUE.equals(cycle.getNotifyGp())) {
+            out.add(PmsNotificationAudience.GP);
+        }
+        return out;
     }
 
     private static <T> Set<T> distinct(List<T> ids) {

@@ -77,6 +77,8 @@ public record PmsCycleRequest(
             @JsonProperty("notify_managers") Boolean notifyManagers,
             @JsonProperty("notify_employees") Boolean notifyEmployees,
             @JsonProperty("notify_hod") Boolean notifyHod,
-            @JsonProperty("notify_hr") Boolean notifyHr) {
+            @JsonProperty("notify_hr") Boolean notifyHr,
+            @JsonProperty("notify_gp") Boolean notifyGp,
+            @JsonProperty("approval_workflow_id") UUID approvalWorkflowId) {
     }
 }

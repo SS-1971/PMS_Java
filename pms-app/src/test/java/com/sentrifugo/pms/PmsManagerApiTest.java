@@ -182,7 +182,7 @@ class PmsManagerApiTest {
                   {"kpi_id": "%s", "weightage": 60}, {"kpi_id": "%s", "weightage": 40}]}]}
                 """.formatted(kra, kpi1, kpi2)), 200);
         JsonNode finished = ok(call("PUT", path + "/competencies", hr, """
-                {"competencies": [{"competency_id": "%s", "weightage": 50}, {"competency_id": "%s", "weightage": 50}]}
+                {"competencies": [{"competency_id": "%s"}, {"competency_id": "%s"}]}
                 """.formatted(comp, hrComp)), 200);
         assertThat(finished.get("status").asString()).isEqualTo("active");
 
@@ -457,8 +457,13 @@ class PmsManagerApiTest {
         assertThat(open.get("rows").get(0).get("approved_now").decimalValue().intValue()).isEqualTo(5800);
         assertThat(open.get("rows").get(0).get("requested").decimalValue().intValue()).isEqualTo(5600);
         assertThat(open.get("rows").get(0).get("changed").asBoolean()).isTrue();
-        // KRAs nobody revised are not put in front of the HOD
-        assertThat(open.get("rows").size()).isEqualTo(1);
+        // a goal sheet is reviewed whole: every KPI is listed, the unchanged ones flagged as such
+        assertThat(open.get("rows").size()).isEqualTo(2);
+        assertThat(open.get("rows").get(1).get("changed").asBoolean()).isFalse();
+        assertThat(open.get("rows").get(0).get("employee_requested").decimalValue().intValue()).isEqualTo(5500);
+        assertThat(open.get("rows").get(0).get("expected_outcome").asString()).isNotBlank();
+        assertThat(open.get("acknowledged_on").isNull()).isFalse();
+        assertThat(open.get("sent_for_approval_on").isNull()).isFalse();
 
         // returning needs remarks; the manager revises, the employee acknowledges, the manager resends
         assertThat(code(call("POST", base + "/hod/return", f.hod(), action.formatted(f.employeeId(), FY, "")), 422))

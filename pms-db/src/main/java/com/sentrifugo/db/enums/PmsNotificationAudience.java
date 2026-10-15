@@ -4,5 +4,6 @@ public enum PmsNotificationAudience {
     HOD_REVIEWERS,
     REPORTING_MANAGERS,
     EMPLOYEES,
-    HR
+    HR,
+    GP
 }

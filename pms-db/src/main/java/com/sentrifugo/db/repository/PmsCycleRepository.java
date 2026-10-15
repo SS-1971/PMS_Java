@@ -18,6 +18,9 @@ public interface PmsCycleRepository extends JpaRepository<PmsCycleEntity, UUID>,
 
     Optional<PmsCycleEntity> findByIdAndOrganisationId(UUID id, String organisationId);
 
+    /** True when any cycle of the organisation uses the approval workflow. */
+    boolean existsByOrganisationIdAndApprovalWorkflowId(String organisationId, UUID approvalWorkflowId);
+
     boolean existsByCycleCode(String cycleCode);
 
     /** The organisation's cycles in one state, e.g. the active ones that set goal-acknowledgement deadlines. */

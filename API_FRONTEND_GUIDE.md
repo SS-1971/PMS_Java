@@ -1182,3 +1182,37 @@ New columns `goal_progress.status` and `goal_progress.submitted_on`: `sql/V7__pm
 - Competency: `id`, `name`, `type` (`hr` or `manager`), `self_rating`, `comment`.
 
 `PUT /update/self-appraisal`: `{financial_year, submit, kras:[{kpi_id, rating, actual, evidence, attachment_name}], competencies:[{competency_id, rating, comment}]}`. Ratings are 1-5. `submit: true` needs every KRA and competency rated (`422 PMS_APPRAISAL_INCOMPLETE`); a submitted appraisal is read only (`409 PMS_INVALID_GOAL_STATE`). Columns `appraisal_line.actual`, `evidence`, `self_comment`: `sql/V8__pms_self_appraisal_fields.sql`.
+
+### 10.12 Stage notices — `/pms-goal-assignment/get/stage-notices`
+
+`GET /get/stage-notices?financial_year=2026-27` (any signed-in user) returns the stage windows of the organisation active cycle (latest published) that concern the caller, taken from the cycle timeline (screen 1.3):
+
+| Permission held | Stage | Audience |
+|---|---|---|
+| `team_goals` | `goal_setting` | manager |
+| `my_goals` | `employee_acknowledgement` | employee |
+| `goal_approval` | `hod_approval` | hod |
+
+Each notice: `stage`, `title`, `audience`, `cycle_name`, `start_date`, `end_date`, `state` (`upcoming|open|closed`), `days_left`, `notify`. `notify` is true when the stage Notification switch (timeline) and the cycle audience switch (Notify Managers / Employees / HOD, step 4) are both on and the window is not closed. The bell lists only `notify` notices; the banner on Team Goal Setting, My Goals and Goal Approvals shows the window and its end date whenever the stage is returned.
+
+### 10.13 Cycle screens aligned to the mockups
+
+- **Stages (1.3):** `goal_setting`, `employee_acknowledgement`, `hod_approval` (Goal Approval L2), `self_appraisal`, `manager_appraisal` (L1 Rating), `hod_review` (L2 Rating), `hr_competency_rating`, `calibration_final_approval`, `approval_publish`. All nine need dates to publish. `progress_tracking` and `mid_year_review` are no longer cycle stages (old rows still load).
+- **Finalize (1.5):** `notify_employees`, `notify_managers` (Section Heads), `notify_hod` (Functional Heads), `notify_hr` (Plant Heads and Plant HR), `notify_gp`, and `approval_workflow_id`.
+- **Approval Workflow master** `/pms-approval-workflow` (`pms_cycle`): `GET /get/workflows` (a Standard one is created the first time), `POST /create/workflow`, `PUT /update/workflow/{id}`, `DELETE /delete/workflow/{id}` (`409 PMS_WORKFLOW_IN_USE` when a cycle uses it). Body: `{name, description, steps: [...], status}`.
+- **Competencies (2.5):** `weightage` is optional; when left out the ticked competencies share 100 equally.
+- SQL: `sql/V9__pms_cycle_mockup_alignment.sql`.
+
+### 10.14 Publish notifications — `/pms-notification`
+
+When a cycle is published, every audience ticked on screen 1.5 gets an in-app notification (the bell). The same happens when an audience is ticked later on a live cycle (only the newly ticked ones). Recipients are the users IAM reports as holding the grant (`users_with_permission` RPC):
+
+| Audience (screen 1.5) | Grant |
+|---|---|
+| Employees | `my_goals` |
+| Section Heads | `team_goals` |
+| Functional Heads | `goal_approval` |
+| Plant Heads and Plant HR | `appraisal_history` |
+| GP | `goal_template` |
+
+`GET /get/my` (any signed-in user) returns `{unread, items:[{id, title, message, link_path, created_on, read}]}` (latest 50). `POST /read` with `{ids?: []}` marks them read (empty = all). Counts per audience are in the cycle activation `notifications`. Table `pms.user_notification`.

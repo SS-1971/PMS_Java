@@ -81,6 +81,15 @@ public class PmsCycleEntity extends BaseEntity<UUID> {
     @Builder.Default
     private Boolean notifyHr = false;
 
+    /** Screen 1.5 "Notify GP". The columns above map to Section Heads, Employees, Functional Heads and Plant Heads / Plant HR. */
+    @Column(name = "notify_gp", nullable = false, columnDefinition = "boolean default false not null")
+    @Builder.Default
+    private Boolean notifyGp = false;
+
+    /** The approval workflow chosen on screen 1.5; null when none was picked. */
+    @Column(name = "approval_workflow_id")
+    private UUID approvalWorkflowId;
+
     @Column(name = "current_step", nullable = false)
     @Builder.Default
     private Integer currentStep = 1;

@@ -90,7 +90,7 @@ class PmsSchemaTest {
                 "competency_master", "standard_rating_level", "goal_template_kra", "goal_template_kpi",
                 "goal_template_competency", "goal_assignment", "goal_assignment_target", "goal_transfer",
                 "goal_transfer_kra", "goal_progress", "mid_year_review", "target_revision", "target_revision_row",
-                "appraisal", "appraisal_line", "calibration_distribution", "goal_change_request", "goal_sheet_history");
+                "appraisal", "appraisal_line", "calibration_distribution", "goal_change_request", "goal_sheet_history", "approval_workflow", "user_notification");
     }
 
     @Test

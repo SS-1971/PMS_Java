@@ -22,6 +22,8 @@ import com.sentrifugo.pms.model.PmsTemplateAssignmentResponse;
 import com.sentrifugo.pms.model.PmsTeamMemberResponse;
 import com.sentrifugo.pms.service.PmsGoalAssignmentService;
 import com.sentrifugo.pms.service.PmsHodApprovalService;
+import com.sentrifugo.pms.service.PmsStageNoticeService;
+import com.sentrifugo.pms.model.PmsStageNoticeResponse;
 import com.sentrifugo.security.access.RequirePermission;
 import com.sentrifugo.security.context.PmsUserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -54,6 +56,7 @@ public class PmsGoalAssignmentController {
 
     private final PmsGoalAssignmentService service;
     private final PmsHodApprovalService hodService;
+    private final PmsStageNoticeService stageNoticeService;
 
     @GetMapping("/get/team")
     @RequirePermission(module = MODULE, action = ACTION_TEAM_GOALS)
@@ -201,6 +204,19 @@ public class PmsGoalAssignmentController {
     public ResponseEntity<ApiResponse<PmsEmployeeTargetsResponse>> returnToManager(
             @AuthenticationPrincipal PmsUserPrincipal user, @Valid @RequestBody PmsApprovalActionRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(service.returnToManager(user, request), "Goals returned to manager"));
+    }
+
+    // ── Stage windows: the bell and the "open until" banner ──────────────────
+
+    @GetMapping("/get/stage-notices")
+    @Operation(summary = "Stage windows that concern me",
+            description = "Goal setting for a manager, employee acknowledgement for an employee, HOD approval for an "
+                    + "HOD: start and end dates from the active cycle timeline. `notify` says whether the bell "
+                    + "should announce it; the banner shows the end date whenever the stage is returned.")
+    public ResponseEntity<ApiResponse<List<PmsStageNoticeResponse>>> stageNotices(
+            @AuthenticationPrincipal PmsUserPrincipal user,
+            @RequestParam(name = "financial_year") String financialYear) {
+        return ResponseEntity.ok(ApiResponse.ok(stageNoticeService.notices(user, financialYear), "Notices found"));
     }
 
     // ── HOD approvals: goal sheets and target revisions ─────────────────────
