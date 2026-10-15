@@ -6,5 +6,5 @@ import jakarta.validation.constraints.NotBlank;
 /** Employee decision on their own goals (acknowledge). */
 public record PmsGoalDecisionRequest(
         @JsonProperty("financial_year") @NotBlank String financialYear,
-        @JsonProperty("comment") String comment) {
+        @JsonProperty("comment") @jakarta.validation.constraints.Size(max = 500) String comment) {
 }

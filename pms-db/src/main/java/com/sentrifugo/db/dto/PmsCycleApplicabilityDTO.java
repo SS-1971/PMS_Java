@@ -24,6 +24,8 @@ public class PmsCycleApplicabilityDTO extends BaseDTO {
 
     private Integer minimumServiceMonths;
 
+    private Integer appraisalMinimumServiceMonths;
+
     private LocalDate serviceCalculatedAsOn;
 
     private Boolean excludeProbation;

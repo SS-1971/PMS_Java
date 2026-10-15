@@ -169,11 +169,11 @@ Shared types used below:
 | `plant_ids` | string[] | Sentrifugo plant ids (24-character strings) |
 | `all_departments` | boolean | If `false`, `department_ids` must have at least one id on publish |
 | `department_ids` | string[] | Sentrifugo department ids (24-character strings) |
-| `employment_types` | string[] | `permanent`, `contract`, `trainee` |
-| `min_service_months` | integer | ≥ 0. Required on publish. |
-| `service_as_on` | date | Date used to calculate service. Required on publish. |
-| `exclude_probation` | boolean | |
-| `exclude_notice_period` | boolean | |
+| `goal_setting` | object | **Who gets goals.** `{ employment_types, min_service_months }`. At least one employment type and `min_service_months` ≥ 0 are required on publish. |
+| `appraisal` | object | **Who is rated.** `{ employment_types, min_service_months, service_as_on }`. All three are required on publish; service must be complete on or before `service_as_on`. |
+| `exclude_notice_period` | boolean | Exclude resigned / notice-period employees |
+
+Employment types are `permanent`, `contract`, `probationary` and `trainee`. The old flat `employment_types`, `min_service_months`, `service_as_on` and `exclude_probation` fields are gone: "probationary" is now an employment type, chosen per half.
 
 **`CycleFinalize`** (screen 1.5)
 
@@ -289,10 +289,8 @@ Any authenticated user. Returns `404 PMS_CYCLE_NOT_FOUND` if the cycle is not in
     "plant_ids": [],
     "all_departments": true,
     "department_ids": [],
-    "employment_types": ["permanent", "contract"],
-    "min_service_months": 6,
-    "service_as_on": "2026-03-31",
-    "exclude_probation": true,
+    "goal_setting": { "employment_types": ["permanent", "probationary", "trainee"], "min_service_months": 0 },
+    "appraisal": { "employment_types": ["permanent"], "min_service_months": 12, "service_as_on": "2026-04-30" },
     "exclude_notice_period": false
   },
   "finalize": {
@@ -1001,3 +999,186 @@ Errors: `404 PMS_RATING_SCALE_NOT_FOUND` · `422` for the same level rules as cr
 - **Cycle list is paginated; goal template list, master lists and rating scales are not.** Load them in full.
 - **Stages and applicability are optional on draft save.** Validation happens only on publish.
 - **Stage `stage` values** must match the nine values in §2.2 exactly (lowercase).
+
+---
+
+## 10. Manager screens after goal setting (3.6 – 3.14)
+
+All paths are after `/api/v1/pms`. Every request and response uses snake_case and the envelope in §1.3. Ratings are whole numbers 1–5. Every manager call checks that the employee is one of the caller's direct reports (`403 PMS_NOT_IN_TEAM` otherwise). IAM permission codes are in the `performance_management` module.
+
+### 10.1 Goal status and send to HOD — `/pms-goal-assignment` (screen 3.6)
+
+`GET /get/team?financial_year=2026-27` (`team_goals`) now also returns `template_name` and two extra `goal_status` values:
+
+| `goal_status` | Meaning |
+|---|---|
+| `returned_by_hod` | The HOD sent the sheet back. `hod_remarks` is on `get/employee-targets`. |
+| `transferred_in` | The employee moved into the team mid-year and period 2 KRAs are not sent yet (§10.2). |
+
+`GET /get/employee-targets` also returns `employee_name`, `emp_code`, `role_name`, `manager_name` (manager view only) and per KPI `target_type` (`common` / `individual`) and `history` (up to three previous years: `financial_year`, `target`, `actual`).
+
+`POST /assign-template` (`team_goals`) — body `{ "financial_year": "2026-27", "designation_id": "…", "template_id": "…" }`. "Create & assign template" (screen 3.2): gives the template named by `template_id` (the role's active template; the team list returns its id) to every direct report with that role who has none; employees who already have a goal sheet keep theirs. Returns `{ designation_id, template_id, template_name, assigned, already_assigned }`. `404 PMS_TEMPLATE_NOT_FOUND` for an unknown template; `422 PMS_TEMPLATE_ROLE_MISMATCH` when it is not the role's active template for the year; `422 PMS_ROLE_NOT_IN_TEAM` when none of your reports has the role. Safe to repeat.
+
+`GET /get/team` rows carry `template_id` and `template_name`: the template assigned to the employee, or (until assigned) the role's active template, plus `template_assigned` (boolean). Saving targets (`PUT /update/employee-targets`, `POST /send`) needs the template assigned first: `409 PMS_TEMPLATE_NOT_ASSIGNED`. An assigned employee with no targets saved yet is still `not_started`.
+
+**Acknowledge / request change (employee, `my_goals`).** `POST /acknowledge` `{ financial_year, comment? }` (comment up to 500 characters, kept and returned as `acknowledge_comment`) moves `sent_to_employee` to `acknowledged`. `POST /request-change` `{ financial_year, kpi_id, proposed_target?, reason }` (reason required, up to 1000 characters; `kpi_id` must be on the employee's own sheet, else `422 PMS_KPI_NOT_IN_TEMPLATE`; proposed target not negative) moves it to `change_requested`. Both are only allowed while the sheet is `sent_to_employee` (`422 PMS_INVALID_GOAL_STATE`) and only ever touch the caller's own sheet. The employee may ask again after the manager resends. While a sheet is `sent_to_employee`, `acknowledged`, `with_hod` or `approved` the manager cannot save or send targets (`409 PMS_INVALID_GOAL_STATE`), and `send-to-hod` accepts acknowledged sheets only.
+
+`POST /send-to-hod` (`team_goals`) — body `{ "financial_year": "2026-27", "employee_user_ids": ["…"], "remarks": "…" }`. Moves each acknowledged sheet to `with_hod` and returns the ids sent. `remarks` is the manager's optional note to the HOD (up to 500 characters, `422 VALIDATION_ERROR` beyond that); it is kept on the sheet trail. `422 PMS_INVALID_GOAL_STATE` if any sheet is not `acknowledged`; `422 PMS_TARGETS_INVALID` if the sheet is incomplete (a target missing or the weights not totalling 100).
+
+**Only revised KRAs go to the HOD.** A KRA is revised when its current `target` differs from `original_target`, the value the manager first assigned. The HOD queue and `get/hod-review` list only those KRAs; unrevised KRAs are never shown to the HOD. A sheet with no revised KRA has nothing for the HOD to decide: it is approved when the employee acknowledges (`approved`, trail event "Goals approved: no KRA was revised, so nothing needed the HOD"), and `send-to-hod` on such a sheet approves it instead of queuing it.
+
+**The send-to-HOD loop.** Only a sheet the manager has sent (`with_hod`) is in the HOD's queue and can be approved or returned; an `acknowledged` sheet waits for the manager (`422 PMS_NOT_AWAITING_HOD` otherwise). The HOD approves it (`approved`) or returns it with remarks (`422 PMS_REMARKS_REQUIRED` without them), which puts it back with the manager as `returned_by_hod`. The manager revises and resends (`POST /send`, per-target `remarks`), the employee acknowledges or asks for a change again, and the manager sends it to the HOD once more; every round stays on the trail. A resend clears the HOD's remarks from the sheet, so a later draft is not shown as returned.
+
+### 10.2 Transferred employees — `/pms-goal-transfer` (screens 3.6 banner, 3.8)
+
+| Method | Path | Permission | Purpose |
+|---|---|---|---|
+| GET | `/get/notices?financial_year=` | `team_goals` | Transfers into the team still needing period 2 KRAs |
+| GET | `/get/transfer-sheet?employee_user_id=&financial_year=` | `team_goals` | Frozen period 1 rows and editable period 2 rows |
+| PUT | `/update/transfer-sheet` | `team_goals` | Save draft (replaces period 2 rows) |
+| POST | `/send/transfer-sheet` | `team_goals` | Validate and send to the employee |
+| POST | `/create/transfer` | `pms_cycle` | HR records a transfer, with the earlier KRAs as period 1 |
+
+Period 2 rows start from the active template of the employee's role (`source: "template"`). `PUT` / `POST` body: `employee_user_id`, `financial_year`, `reason`, `remarks`, `kras[]` of `{ kra_name, weight, target, unit, source, source_label }` (period 2 only).
+
+Send is refused with `422 PMS_TRANSFER_INVALID` unless period 2 weights total 100, every target is set, a `reason` is given and `remarks` has 10+ characters. A sent sheet cannot be edited (`422 PMS_INVALID_GOAL_STATE`). `404 PMS_TRANSFER_NOT_FOUND`, `409 PMS_TRANSFER_EXISTS`.
+
+### 10.3 Team progress — `/pms-progress` (screen 3.9)
+
+`GET /get/team?financial_year=` (`team_progress`) returns one row per direct report: `locked`, `kras_on_track`, `kras_total`, `attention[]` (`kra_name`, `rag`), `achievement`, `comment`, `overall_rag`. A row is `locked` until the HOD approves the goals.
+
+`PUT /update/my-progress` (`progress`) — the employee reports actuals: `{ financial_year, period: "current" | "h1" | "fy", comment, entries: [{ kpi_id, actual, attachment_name }] }`. `409 PMS_GOALS_NOT_APPROVED` before approval.
+
+Achievement is `actual / target × 100`; `rag` is `on_track` from 95%, `at_risk` from 90%, else `off_track`. A zero target is met only by a zero actual. There is no "lower is better" direction on the KPI master yet.
+
+### 10.4 Mid-year review and target revision — `/pms-mid-year` (screens 3.10 – 3.12)
+
+All `mid_year_review`; the goals must be HOD approved (`409 PMS_GOALS_NOT_APPROVED`).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/get/team?financial_year=` | Rows: `role`, `h1_achievement`, `rag`, `status` (`not_started`, `completed_no_revision`, `revision_requested`) |
+| GET | `/get/review?employee_user_id=&financial_year=` | KRAs with `target`, `h1_actual`, `rag`, plus saved notes and decision |
+| POST | `/submit/review` | `{ employee_user_id, financial_year, discussion_notes, revision_required }` |
+| GET | `/get/revision-request?employee_user_id=&financial_year=` | Every KPI with its locked `weight` and `current_target` |
+| POST | `/submit/revision-request` | `{ employee_user_id, financial_year, attachment_name, rows: [{ kpi_id, revised_target, reason }] }` |
+
+`revision_required: false` completes the review. `true` needs `discussion_notes` of 10+ characters (`422 PMS_NOTES_REQUIRED`) and keeps the review open until the revision request is sent. The revision request takes only changed targets, each with a reason of 5+ characters (`422 PMS_REVISION_INVALID`), and moves the review to `revision_requested`. `409 PMS_REVISION_PENDING` if one is already with the HOD. HOD approval of the revision is not built yet.
+
+### 10.5 Appraisal — `/pms-appraisal` (screens 3.13 – 3.14)
+
+| Method | Path | Permission | Purpose |
+|---|---|---|---|
+| GET | `/get/team?financial_year=` | `team_appraisal` | `self_status`, `self_score`, `manager_status` (`waiting`, `pending`, `draft`, `submitted_to_hod`) |
+| GET | `/get/manager-appraisal?employee_user_id=&financial_year=` | `team_appraisal` | KRAs, manager competencies, HR competencies (view only) |
+| PUT | `/update/manager-appraisal` | `team_appraisal` | Save draft; ratings may be empty |
+| POST | `/submit/manager-appraisal` | `team_appraisal` | Submit to the HOD |
+| PUT | `/update/self-appraisal` | `self_appraisal` | The employee saves (`submit: false`) or submits (`submit: true`) |
+
+Save and submit body: `{ employee_user_id, financial_year, kras: [{ kpi_id, rating, comment }], competencies: [{ id, rating, comment }], recommended_rating, comments }`.
+
+`get/manager-appraisal` returns `409 PMS_SELF_APPRAISAL_PENDING` until the employee has submitted. Submit is refused with `422 PMS_APPRAISAL_INVALID` unless every KRA and manager competency is rated, a `recommended_rating` is given, and any rating two or more points from the self rating has a comment of 5+ characters. Competencies whose category starts with "HR" are rated by Plant HR and are returned under `hr_competencies` with only the self rating.
+
+### 10.5a HR competency rating — `/pms-hr-appraisal` (screens 1.7 – 1.8)
+
+Corporate HR rates the HR competencies once the manager has submitted the appraisal. Every call needs `rating_normalization` (the code Corporate HR already holds; no new IAM permission).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/get/queue?financial_year=&department_id=&status=&search=` | Employees whose manager appraisal is in. `status` is `pending`, `draft`, `rated` or `all`. Rows: `employee_user_id`, `employee_name`, `emp_code`, `department_id`, `functional_head`, `hod_rated_on`, `status`, `sent_to_calibration` |
+| GET | `/get/employee?employee_user_id=&financial_year=` | `hr_competencies` (rate now: `self_rating`, `hr_rating`, `comment`), `manager_competencies` (view only: self, manager, HOD), `remarks`, `locked` (true once sent to calibration). `409 PMS_MANAGER_APPRAISAL_PENDING` until the manager has submitted |
+| PUT | `/update/hr-ratings` | Save draft; ratings may be empty |
+| POST | `/submit/hr-ratings` | Every HR competency must be rated 1-5 (`422 PMS_HR_RATING_INCOMPLETE`) |
+| POST | `/send/calibration` | `{ financial_year, employee_user_ids }`. Only rated employees (`409 PMS_HR_RATING_PENDING`). Returns `{ sent }` |
+
+Save and submit body: `{ employee_user_id, financial_year, competencies: [{ id, rating, comment }], remarks }`.
+
+### 10.5b Calibration — `/pms-calibration` (screen 1.9)
+
+Needs `rating_normalization`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/get/calibration?financial_year=` | `distribution` (per rating: `current_percent`, `guideline_percent`, `hr_percent`), `employees` (manager, HOD, `hr_competency_avg`, `current_rating`, `calibrated_rating`, `reason`), `published` |
+| PUT | `/update/calibration` | `{ financial_year, distribution: [{ rating, hr_percent }], employees: [{ employee_user_id, calibrated_rating, reason }] }`. `409 PMS_CALIBRATION_PUBLISHED` once published |
+| POST | `/publish/calibration` | `{ financial_year }`. `422 PMS_CALIBRATION_TOTAL` unless HR's targets total 100%; `422 PMS_CALIBRATION_INVALID` when a changed rating has no reason of 5+ characters |
+
+`current_rating` is the HOD rating, else the manager's recommended rating. The guideline is the standard 5 / 20 / 60 / 10 / 5 split for ratings 5 to 1.
+
+### 10.6 Goal template status and duplicate — `/pms-goal-template` (screen 2.1)
+
+`PUT /update/goal-template/{templateId}/status` (`goal_template`) — body `{ "status": "draft" | "active" | "inactive" }`, returns the template. Activating needs a complete template (`409 PMS_TEMPLATE_INCOMPLETE`) and no other active template for the same role and year (`409 PMS_TEMPLATE_ROLE_CONFLICT`).
+
+`POST /duplicate/goal-template/{templateId}` (`goal_template`) — creates a draft named `"<name> (Copy)"` in the same year with the same KRAs, KPIs and competencies. Returns `201` and the new template.
+
+### 10.7 Not built yet
+
+- **Eligibility preview** for the cycle wizard (`POST /pms-cycle/preview-eligibility`) needs an employee-directory query from IAM that does not exist as an RPC yet.
+- **Acknowledgement deadline** (`acknowledge_by`) is not returned.
+- **Period 2 appraisal** for a transferred employee (rating each period separately) and **HOD approval** of target revisions and appraisals are not built.
+- The employee's own screens (`progress`, `self_appraisal`) have only the minimal write endpoints above.
+
+### 10.8 My goals — `/pms-goal-assignment` (screens 4.1, 4.5)
+
+`GET /get/my-goals?financial_year=2026-27` (`my_goals`) returns the signed-in employee's own sheet. `404 PMS_GOALS_NOT_FOUND` until the manager has saved targets.
+
+**Change-request rules.** Per KPI: `original_target` is the first target the manager sent and never changes (show it in the *Target* column); `revised_target` is the manager's answer to a change request (show it only in *Revised Target*); `revision_count` is the permanent number of requests made. Only one request can be open per KPI: while the sheet is `change_requested`, a second `POST /request-change` returns `422 PMS_INVALID_GOAL_STATE` (or `409 PMS_REVISION_PENDING`). When the manager sends the sheet again the request is answered and the employee can ask again, which increments `revision_count`.
+
+`GET /get/my-change-requests?financial_year=` (`my_goals`) returns the employee's full request log; `GET /get/change-requests?employee_user_id=&financial_year=` (`team_goals`) returns one report's log for the manager. Each row: `kpi_id, kra_name, kpi_name, revision_no, requested_on, reason, proposed_target, target_at_request, status (requested|responded), decision (revised|unchanged), final_target, manager_remarks, responded_on, acknowledged_on`. New table `pms.goal_change_request` and column `original_target` — see `sql/V5__pms_goal_change_requests.sql`.
+
+| Field | Meaning |
+|---|---|
+| `goal_status` | `sent_to_employee` (can acknowledge or request a change), `acknowledged`, `change_requested`, `with_hod`, `approved` |
+| `manager_name` | The manager who set the targets (stored when they save) |
+| `sent_on` | Date the manager sent the sheet (`yyyy-MM-dd`), null before it is sent |
+| `acknowledge_by` | End date of the active cycle's employee-acknowledgement stage for the year; null when no active cycle sets one |
+| `kpis[].target` | The current target |
+| `kpis[].revised_target` | The revised target still to acknowledge; null for KPIs not being revised |
+| `kpis[].previous_target` | The target before that revision. The screen shows it as "Target" beside "Revised target" |
+| `revision` | Null unless a revision is waiting: `source`, `kpi_id`, `revised_target`, `reason`, `approved_by`, `approved_on`, `acknowledge_by` (the first revised KPI is named; every revised KPI has `revised_target`) |
+
+`revision.source` is `manager_revised` when the manager revised the sheet after the employee's change request or an HOD return and resent it with `POST /send` (each target may carry a `remarks` string, which becomes the revision `reason`; only targets that moved are listed). It is `hod_approved` for a mid-year revision approved by the HOD. A `manager_revised` revision is acknowledged together with the sheet: the employee's `POST /acknowledge` moves it to `acknowledged` and clears `revision`. The manager's own `get/employee-targets` already shows the new targets.
+| `hod_remarks` | Remarks when the HOD returned the sheet |
+
+`POST /acknowledge` — body `{ "financial_year": "2026-27" }`. For a `sent_to_employee` sheet it moves the sheet to `acknowledged`. When the sheet is `approved` and a revision is waiting, it applies the revised targets and clears `revision` (the sheet stays `approved`). `422 PMS_INVALID_GOAL_STATE` otherwise.
+
+Not built: the HOD action that approves or returns a target revision. Until it exists nothing sets a revision to approved, so `revision` stays null.
+
+### 10.9 HOD approvals — `/pms-goal-assignment` (`goal_approval`)
+
+Goal sheets the manager sent to the HOD (status `with_hod`) and mid-year target revisions (`pending_hod`) share one list. `request_type` is `goal_sheet` or `target_revision` everywhere below.
+
+| Call | Purpose |
+|---|---|
+| `GET /get/hod-queue?financial_year=` | List. Per row: employee, manager, `request_type`, `changed`, `first_change {kpi_name, unit, from, to}`, `more_changes`, `asked_by_*`, `asked_on`, `revision_rounds`. |
+| `GET /get/hod-review?employee_user_id=&financial_year=&request_type=` | Review screen: `rows[]` with `approved_now`, `requested`, `change`, `change_percent`, `reason`, `changed`, `decision` (`pending/approved/returned/none`), plus `employee_request` and `manager_reply`. |
+| `POST /hod/approve` `{employee_user_id, financial_year, request_type, kpi_ids?, remarks?}` | Approves a whole goal sheet, or the selected KPIs of a revision (all waiting KPIs when `kpi_ids` is empty). |
+| `POST /hod/return` same body, `remarks` required | `422 PMS_REMARKS_REQUIRED` without remarks. A revision closes once every KPI has a decision; returned KPIs go back to the manager and are not shown to the employee. |
+| `POST /hod/approve-selected` `{financial_year, items:[{employee_user_id, request_type}]}` | Bulk approve. Returns `approved`, `failed` and a `results[]` entry per request; a failure does not stop the others. |
+| `GET /get/hod-history?financial_year=&request_type=&decision=&search=` | Decisions already made, newest first. |
+| `GET /get/hod-trail?employee_user_id=&financial_year=` | `moves[]` (how each KPI moved) and `requests[]` (each request with its steps). |
+
+Errors: `409 PMS_NOT_AWAITING_HOD` (not waiting), `422 PMS_KPI_NOT_AWAITING_HOD`, `422 PMS_NOTHING_SELECTED`, `422 PMS_REMARKS_REQUIRED` (return without remarks, also on the legacy `/return`).
+
+Every step is written to `pms.goal_sheet_history` (`sql/V6__pms_goal_sheet_history.sql`) by send, request-change, acknowledge, send-to-HOD, approve, return and the mid-year revision. Per-KPI HOD decisions are stored on `target_revision_row.decision`.
+
+The HOD list is organisation-wide for holders of `goal_approval`; it is not yet restricted to the HOD own reporting line.
+
+### 10.10 Update progress — `/pms-progress` (`progress`, screen 4.4)
+
+`GET /get/my-progress?financial_year=&period=current` returns the employee sheet (needs HOD-approved goals): per KPI `target` (the original, never overwritten), `revised_target` (final target after a revision, null if never revised), `actual`, `status`, `evidence_name`; plus `state` (`open` or `frozen`), `submitted_on`, `comment`.
+
+`PUT /update/my-progress` body: `{financial_year, period, comment, submit, entries:[{kpi_id, actual, status (on_track|at_risk|off_track), attachment_name}]}`.
+- `submit: false` saves a draft; the same KPI and period replaces the earlier figure.
+- `submit: true` needs an actual and a status for every KPI (`422 PMS_PROGRESS_INCOMPLETE`) and freezes the period (`409 PMS_PROGRESS_FROZEN` on a later save).
+- There is no manager approval: the manager only views the figures (`GET /get/team`, and `employee_actual` / `progress_status` on each KPI of `/get/employee-targets` and `/get/my-goals`).
+
+New columns `goal_progress.status` and `goal_progress.submitted_on`: `sql/V7__pms_progress_status_submit.sql`.
+
+### 10.11 Self appraisal — `/pms-appraisal` (`self_appraisal`, screen 4.6)
+
+`GET /get/self-appraisal?financial_year=` (needs HOD-approved goals) returns `status` (`draft` or `submitted`), `self_score`, `kras[]` and `competencies[]`.
+- KRA: `kpi_name`, `target` (original), `revised_target` (final target after a revision, else null), `actual` (the saved figure, else what the employee reported in Update Progress), `self_rating`, `evidence`, `attachment_name`.
+- Competency: `id`, `name`, `type` (`hr` or `manager`), `self_rating`, `comment`.
+
+`PUT /update/self-appraisal`: `{financial_year, submit, kras:[{kpi_id, rating, actual, evidence, attachment_name}], competencies:[{competency_id, rating, comment}]}`. Ratings are 1-5. `submit: true` needs every KRA and competency rated (`422 PMS_APPRAISAL_INCOMPLETE`); a submitted appraisal is read only (`409 PMS_INVALID_GOAL_STATE`). Columns `appraisal_line.actual`, `evidence`, `self_comment`: `sql/V8__pms_self_appraisal_fields.sql`.

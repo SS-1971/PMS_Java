@@ -1,5 +1,6 @@
 package com.sentrifugo.db.dto;
 
+import com.sentrifugo.db.enums.PmsEmploymentScope;
 import com.sentrifugo.db.enums.PmsEmploymentType;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -17,6 +18,8 @@ import java.util.UUID;
 public class PmsCycleEmploymentTypeDTO extends BaseDTO {
 
     private UUID id;
+
+    private PmsEmploymentScope scope;
 
     private PmsEmploymentType employmentType;
 

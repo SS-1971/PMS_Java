@@ -38,4 +38,18 @@ public class PmsGoalAssignmentTargetEntity extends BaseEntity<UUID> {
     /** Numeric target. Null until the manager fills it in. */
     @Column(name = "target", precision = 14, scale = 2)
     private BigDecimal target;
+
+    /**
+     * The target the manager first assigned. Revisions never change it: the employee always sees this in the
+     * Target column, and a revised target is shown beside it. Null until the sheet is first sent.
+     */
+    @Column(name = "original_target", precision = 14, scale = 2)
+    private BigDecimal originalTarget;
+
+    /**
+     * The target as it stood when the sheet was last sent to the employee. Save Draft rewrites {@code target},
+     * so this is what a revised target is compared with. Null until the sheet is first sent.
+     */
+    @Column(name = "sent_target", precision = 14, scale = 2)
+    private BigDecimal sentTarget;
 }

@@ -9,6 +9,7 @@ import com.sentrifugo.pms.model.PmsGoalTemplateKraKpiRequest;
 import com.sentrifugo.pms.model.PmsGoalTemplateListResponse;
 import com.sentrifugo.pms.model.PmsGoalTemplateRequest;
 import com.sentrifugo.pms.model.PmsGoalTemplateResponse;
+import com.sentrifugo.pms.model.PmsGoalTemplateStatusRequest;
 import com.sentrifugo.pms.service.PmsGoalTemplateService;
 import com.sentrifugo.pms.utils.PmsPrincipals;
 import com.sentrifugo.security.access.RequirePermission;
@@ -111,6 +112,34 @@ public class PmsGoalTemplateController {
         PmsGoalTemplateResponse template =
                 service.updateGoalTemplate(PmsPrincipals.organisationId(user), templateId, request);
         return ResponseEntity.ok(ApiResponse.ok(template, "Goal template updated successfully"));
+    }
+
+    @PutMapping("/update/goal-template/{templateId}/status")
+    @RequirePermission(module = "performance_management", action = "goal_template")
+    @Operation(summary = "Activate or deactivate a goal template (screen 2.1)",
+            description = "Sets the status to draft, active or inactive. Activating needs a complete template "
+                    + "(409 PMS_TEMPLATE_INCOMPLETE) and no other active template for the same role and year "
+                    + "(409 PMS_TEMPLATE_ROLE_CONFLICT).")
+    public ResponseEntity<ApiResponse<PmsGoalTemplateResponse>> setStatus(
+            @AuthenticationPrincipal PmsUserPrincipal user, @PathVariable UUID templateId,
+            @Valid @RequestBody PmsGoalTemplateStatusRequest request) {
+        log.info("Setting goal template {} status to {}", templateId, request.status());
+        PmsGoalTemplateResponse template =
+                service.setStatus(PmsPrincipals.organisationId(user), templateId, request.status());
+        return ResponseEntity.ok(ApiResponse.ok(template, "Goal template status updated successfully"));
+    }
+
+    @PostMapping("/duplicate/goal-template/{templateId}")
+    @RequirePermission(module = "performance_management", action = "goal_template")
+    @Operation(summary = "Duplicate a goal template (screen 2.1)",
+            description = "Creates a draft copy named \"<name> (Copy)\" in the same financial year, with the "
+                    + "source template's KRAs, KPIs and competencies.")
+    public ResponseEntity<ApiResponse<PmsGoalTemplateResponse>> duplicate(
+            @AuthenticationPrincipal PmsUserPrincipal user, @PathVariable UUID templateId) {
+        log.info("Duplicating goal template: {}", templateId);
+        PmsGoalTemplateResponse template = service.duplicate(PmsPrincipals.organisationId(user), templateId);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.ok(template, "Goal template duplicated successfully"));
     }
 
     @PutMapping("/update/goal-template/{templateId}/kra-kpi")

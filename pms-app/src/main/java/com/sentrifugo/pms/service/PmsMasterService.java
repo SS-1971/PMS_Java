@@ -2,6 +2,7 @@ package com.sentrifugo.pms.service;
 
 import com.sentrifugo.common.exception.DomainException;
 import com.sentrifugo.db.dto.PmsCompetencyMasterDTO;
+import com.sentrifugo.db.enums.PmsCompetencyType;
 import com.sentrifugo.db.dto.PmsKpiMasterDTO;
 import com.sentrifugo.db.dto.PmsKraMasterDTO;
 import com.sentrifugo.db.entity.PmsCompetencyMasterEntity;
@@ -180,6 +181,19 @@ public class PmsMasterService {
 
     // ── Competency ───────────────────────────────────────────────────────────
 
+    /** The given type, else HR for an "HR..." category, else manager. */
+    private static PmsCompetencyType resolveCompetencyType(String type, String category) {
+        if (type == null || type.isBlank()) {
+            return category != null && category.trim().toLowerCase(Locale.ROOT).startsWith("hr")
+                    ? PmsCompetencyType.HR : PmsCompetencyType.MANAGER;
+        }
+        try {
+            return PmsCompetencyType.valueOf(type.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw DomainException.unprocessable("type must be one of: hr, manager", "VALIDATION_ERROR");
+        }
+    }
+
     /** Screen 2.9 "Search by competency": a case-insensitive match on the name. */
     @Transactional(readOnly = true)
     public List<PmsCompetencyResponse> getCompetencies(String organisationId, String search) {
@@ -199,6 +213,7 @@ public class PmsMasterService {
         }
         PmsCompetencyMasterEntity competency = competencyMapper.toEntity(PmsCompetencyMasterDTO.builder()
                 .organisationId(organisationId).name(name).category(request.category().trim())
+                .competencyType(resolveCompetencyType(request.type(), request.category()))
                 .status(parseStatus(request.status())).build());
         return toResponse(competencyRepository.save(competency));
     }
@@ -216,6 +231,7 @@ public class PmsMasterService {
         }
         competencyMapper.updateEntityFromDto(PmsCompetencyMasterDTO.builder().name(name)
                 .category(request.category().trim())
+                .competencyType(resolveCompetencyType(request.type(), request.category()))
                 .status(request.status() == null ? null : parseStatus(request.status())).build(), competency);
         return toResponse(competencyRepository.save(competency));
     }
@@ -361,7 +377,8 @@ public class PmsMasterService {
     }
 
     private PmsCompetencyResponse toResponse(PmsCompetencyMasterEntity c) {
-        return new PmsCompetencyResponse(c.getId(), c.getName(), c.getCategory(), wire(c.getStatus()));
+        return new PmsCompetencyResponse(c.getId(), c.getName(), c.getCategory(), wire(c.getCompetencyType()),
+                wire(c.getStatus()));
     }
 
     private static String wire(Enum<?> value) {

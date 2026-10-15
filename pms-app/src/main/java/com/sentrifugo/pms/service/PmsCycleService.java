@@ -13,6 +13,7 @@ import com.sentrifugo.db.entity.PmsCycleStageEntity;
 import com.sentrifugo.db.enums.PmsCycleStageType;
 import com.sentrifugo.db.enums.PmsCycleStatus;
 import com.sentrifugo.db.enums.PmsCycleType;
+import com.sentrifugo.db.enums.PmsEmploymentScope;
 import com.sentrifugo.db.enums.PmsEmploymentType;
 import com.sentrifugo.db.enums.PmsMasterStatus;
 import com.sentrifugo.db.mapper.PmsCycleApplicabilityMapper;
@@ -271,17 +272,21 @@ public class PmsCycleService {
         boolean allDepartments = a.allDepartments() == null || a.allDepartments();
         Set<String> plantIds = allPlants ? Set.of() : distinct(a.plantIds());
         Set<String> departmentIds = allDepartments ? Set.of() : distinct(a.departmentIds());
-        Set<PmsEmploymentType> employmentTypes = new java.util.LinkedHashSet<>();
-        if (a.employmentTypes() != null) {
-            a.employmentTypes().forEach(t -> employmentTypes.add(parseEmploymentType(t)));
-        }
+        PmsCycleRequest.GoalSetting goalSetting = a.goalSetting();
+        PmsCycleRequest.Appraisal appraisal = a.appraisal();
+        Set<PmsEmploymentType> goalTypes =
+                parseEmploymentTypes(goalSetting == null ? null : goalSetting.employmentTypes());
+        Set<PmsEmploymentType> appraisalTypes =
+                parseEmploymentTypes(appraisal == null ? null : appraisal.employmentTypes());
 
         PmsCycleApplicabilityDTO dto = PmsCycleApplicabilityDTO.builder()
                 .allPlants(allPlants)
                 .allDepartments(allDepartments)
-                .minimumServiceMonths(a.minServiceMonths())
-                .serviceCalculatedAsOn(a.serviceAsOn())
-                .excludeProbation(flag(a.excludeProbation()))
+                .minimumServiceMonths(goalSetting == null ? null : goalSetting.minServiceMonths())
+                .appraisalMinimumServiceMonths(appraisal == null ? null : appraisal.minServiceMonths())
+                .serviceCalculatedAsOn(appraisal == null ? null : appraisal.serviceAsOn())
+                // "Probationary" is an employment type now, so the old blanket exclusion switch is retired.
+                .excludeProbation(false)
                 .excludeNoticePeriod(flag(a.excludeNoticePeriod()))
                 .build();
         PmsCycleApplicabilityEntity row = applicabilityRepository.findByCycleId(cycle.getId()).orElse(null);
@@ -293,6 +298,7 @@ public class PmsCycleService {
             row.setAllPlants(dto.getAllPlants());
             row.setAllDepartments(dto.getAllDepartments());
             row.setMinimumServiceMonths(dto.getMinimumServiceMonths());
+            row.setAppraisalMinimumServiceMonths(dto.getAppraisalMinimumServiceMonths());
             row.setServiceCalculatedAsOn(dto.getServiceCalculatedAsOn());
             row.setExcludeProbation(dto.getExcludeProbation());
             row.setExcludeNoticePeriod(dto.getExcludeNoticePeriod());
@@ -307,8 +313,18 @@ public class PmsCycleService {
                 PmsCyclePlantEntity.builder().cycle(cycle).plantId(id).build()));
         departmentIds.forEach(id -> departmentRepository.save(
                 PmsCycleDepartmentEntity.builder().cycle(cycle).departmentId(id).build()));
-        employmentTypes.forEach(t -> employmentTypeRepository.save(
-                PmsCycleEmploymentTypeEntity.builder().cycle(cycle).employmentType(t).build()));
+        goalTypes.forEach(t -> employmentTypeRepository.save(PmsCycleEmploymentTypeEntity.builder()
+                .cycle(cycle).scope(PmsEmploymentScope.GOAL_SETTING).employmentType(t).build()));
+        appraisalTypes.forEach(t -> employmentTypeRepository.save(PmsCycleEmploymentTypeEntity.builder()
+                .cycle(cycle).scope(PmsEmploymentScope.APPRAISAL).employmentType(t).build()));
+    }
+
+    private static Set<PmsEmploymentType> parseEmploymentTypes(List<String> values) {
+        Set<PmsEmploymentType> out = new java.util.LinkedHashSet<>();
+        if (values != null) {
+            values.forEach(t -> out.add(parseEmploymentType(t)));
+        }
+        return out;
     }
 
     // ── Validation ───────────────────────────────────────────────────────────
@@ -379,14 +395,21 @@ public class PmsCycleService {
                 problems.add("at least one department must be selected when not applying to all departments");
             }
             if (applicability.getMinimumServiceMonths() == null) {
-                problems.add("minimum service (months) is required");
+                problems.add("goal setting: minimum service (months) is required");
+            }
+            if (applicability.getAppraisalMinimumServiceMonths() == null) {
+                problems.add("appraisal: minimum service (months) is required");
             }
             if (applicability.getServiceCalculatedAsOn() == null) {
-                problems.add("the service-calculated-as-on date is required");
+                problems.add("appraisal: the service-completed-on-or-before date is required");
             }
         }
-        if (employmentTypeRepository.findByCycleId(id).isEmpty()) {
-            problems.add("at least one employment type must be selected");
+        List<PmsCycleEmploymentTypeEntity> types = employmentTypeRepository.findByCycleId(id);
+        if (types.stream().noneMatch(t -> t.getScope() == PmsEmploymentScope.GOAL_SETTING)) {
+            problems.add("goal setting: at least one employment type must be selected");
+        }
+        if (types.stream().noneMatch(t -> t.getScope() == PmsEmploymentScope.APPRAISAL)) {
+            problems.add("appraisal: at least one employment type must be selected");
         }
 
         Set<PmsCycleStageType> complete = EnumSet.noneOf(PmsCycleStageType.class);
@@ -465,7 +488,8 @@ public class PmsCycleService {
         try {
             return PmsEmploymentType.valueOf(value.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw DomainException.unprocessable("employment type must be one of: permanent, contract, trainee",
+            throw DomainException.unprocessable(
+                    "employment type must be one of: permanent, contract, probationary, trainee",
                     "VALIDATION_ERROR");
         }
     }
@@ -476,6 +500,12 @@ public class PmsCycleService {
         return new PmsCycleListResponse.Item(cycle.getId(), cycle.getCycleCode(), cycle.getName(),
                 wire(cycle.getType()), cycle.getPeriodStart(), cycle.getPeriodEnd(), allPlants ? "All Plants" : null,
                 wire(cycle.getStatus()), toDate(cycle.getCreatedDate()));
+    }
+
+    private List<String> employmentTypes(UUID cycleId, PmsEmploymentScope scope) {
+        return employmentTypeRepository.findByCycleId(cycleId).stream()
+                .filter(e -> e.getScope() == scope)
+                .map(e -> wire(e.getEmploymentType())).sorted().toList();
     }
 
     private PmsCycleResponse toResponse(PmsCycleEntity cycle) {
@@ -495,10 +525,12 @@ public class PmsCycleService {
                         Boolean.TRUE.equals(a.getAllDepartments()),
                         departmentRepository.findByCycleId(id).stream()
                                 .map(PmsCycleDepartmentEntity::getDepartmentId).toList(),
-                        employmentTypeRepository.findByCycleId(id).stream()
-                                .map(e -> wire(e.getEmploymentType())).sorted().toList(),
-                        a.getMinimumServiceMonths(), a.getServiceCalculatedAsOn(),
-                        Boolean.TRUE.equals(a.getExcludeProbation()),
+                        new PmsCycleResponse.GoalSetting(
+                                employmentTypes(id, PmsEmploymentScope.GOAL_SETTING),
+                                a.getMinimumServiceMonths()),
+                        new PmsCycleResponse.Appraisal(
+                                employmentTypes(id, PmsEmploymentScope.APPRAISAL),
+                                a.getAppraisalMinimumServiceMonths(), a.getServiceCalculatedAsOn()),
                         Boolean.TRUE.equals(a.getExcludeNoticePeriod())))
                 .orElse(null);
 

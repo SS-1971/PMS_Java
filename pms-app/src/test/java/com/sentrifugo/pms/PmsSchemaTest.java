@@ -88,7 +88,9 @@ class PmsSchemaTest {
                 "pms_cycle_employment_type", "pms_cycle_eligibility_run", "pms_cycle_notification",
                 "rating_scale", "rating_scale_level", "goal_template", "kra_master", "kpi_master",
                 "competency_master", "standard_rating_level", "goal_template_kra", "goal_template_kpi",
-                "goal_template_competency", "goal_assignment", "goal_assignment_target");
+                "goal_template_competency", "goal_assignment", "goal_assignment_target", "goal_transfer",
+                "goal_transfer_kra", "goal_progress", "mid_year_review", "target_revision", "target_revision_row",
+                "appraisal", "appraisal_line", "calibration_distribution", "goal_change_request", "goal_sheet_history");
     }
 
     @Test
@@ -100,7 +102,8 @@ class PmsSchemaTest {
         assertThat(columns("pms_cycle_stage")).contains("id", "cycle_id", "stage", "start_date", "end_date",
                 "notification_enabled", "created_by", "modified_by", "created_date", "modified_date");
         assertThat(columns("pms_cycle_applicability")).contains("id", "cycle_id", "all_plants", "all_departments",
-                "minimum_service_months", "service_calculated_as_on", "exclude_probation", "exclude_notice_period");
+                "minimum_service_months", "appraisal_minimum_service_months", "service_calculated_as_on",
+                "exclude_probation", "exclude_notice_period");
         assertThat(columns("pms_cycle_plant")).contains("id", "cycle_id", "plant_id", "created_date");
         assertThat(columns("pms_cycle_department")).contains("id", "cycle_id", "department_id", "created_date");
         assertThat(columns("pms_cycle_employment_type")).contains("id", "cycle_id", "employment_type", "created_date");
@@ -158,11 +161,16 @@ class PmsSchemaTest {
         assertThat(uniqueKeys("pms_cycle_applicability")).contains("cycle_id");
         assertThat(uniqueKeys("pms_cycle_plant")).contains("cycle_id,plant_id");
         assertThat(uniqueKeys("pms_cycle_department")).contains("cycle_id,department_id");
-        assertThat(uniqueKeys("pms_cycle_employment_type")).contains("cycle_id,employment_type");
+        assertThat(uniqueKeys("pms_cycle_employment_type")).contains("cycle_id,scope,employment_type");
         assertThat(uniqueKeys("rating_scale_level")).contains("rating_scale_id,rating_value");
         assertThat(uniqueKeys("goal_template_kra")).contains("template_id,kra_id");
         assertThat(uniqueKeys("goal_template_kpi")).contains("template_id,kpi_id");
         assertThat(uniqueKeys("goal_template_competency")).contains("template_id,competency_id");
+        assertThat(uniqueKeys("goal_transfer")).contains("organisation_id,employee_user_id,financial_year");
+        assertThat(uniqueKeys("goal_progress")).contains("assignment_id,kpi_id,period_code");
+        assertThat(uniqueKeys("mid_year_review")).contains("assignment_id");
+        assertThat(uniqueKeys("appraisal")).contains("assignment_id");
+        assertThat(uniqueKeys("appraisal_line")).contains("appraisal_id,line_type,ref_id");
     }
 
     @Test
@@ -178,5 +186,12 @@ class PmsSchemaTest {
         assertThat(foreignKeys("goal_template_kpi")).containsExactlyInAnyOrder("template_id", "kra_id", "kpi_id");
         assertThat(foreignKeys("goal_template_competency")).containsExactlyInAnyOrder("template_id",
                 "competency_id");
+        assertThat(foreignKeys("goal_transfer_kra")).containsExactly("transfer_id");
+        assertThat(foreignKeys("goal_progress")).containsExactlyInAnyOrder("assignment_id", "kpi_id");
+        assertThat(foreignKeys("mid_year_review")).containsExactly("assignment_id");
+        assertThat(foreignKeys("target_revision")).containsExactly("assignment_id");
+        assertThat(foreignKeys("target_revision_row")).containsExactlyInAnyOrder("revision_id", "kpi_id");
+        assertThat(foreignKeys("appraisal")).containsExactly("assignment_id");
+        assertThat(foreignKeys("appraisal_line")).containsExactly("appraisal_id");
     }
 }

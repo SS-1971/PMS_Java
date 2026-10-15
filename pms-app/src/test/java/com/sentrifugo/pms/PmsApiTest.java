@@ -47,12 +47,14 @@ class PmsApiTest {
     private static final String ROLE = "eeeeeeee-0000-0000-0000-000000000001";
 
     private static String session(String userId, String orgId, boolean canWrite) {
+        // The action codes are IAM's seeded performance_management permission catalog (the controllers' actions).
         return """
                 {"user_id": "%s", "email": "u@example.com", "org_id": "%s", "is_super_admin": false,
                  "is_org_admin": false,
                  "permissions": {"performance_management": {"acl": "editor",
-                   "actions": {"manage_pms_cycles": %s, "manage_goal_templates": %s, "manage_pms_masters": %s, "manage_rating_scale": %s}, "action_acls": {}}}}
-                """.formatted(userId, orgId, canWrite, canWrite, canWrite, canWrite);
+                   "actions": {"pms_cycle": %s, "goal_template": %s, "kra_master": %s, "kpi_master": %s,
+                               "competency_master": %s, "rating_scale": %s}, "action_acls": {}}}}
+                """.formatted(userId, orgId, canWrite, canWrite, canWrite, canWrite, canWrite, canWrite);
     }
 
     @MockitoBean
@@ -363,9 +365,12 @@ class PmsApiTest {
         return """
                 {"basic": {"name": "%s", "description": "d", "type": "%s", "period_start": "%s", "period_end": "%s"},
                  %s
-                 "applicability": {%s "all_departments": true, "employment_types": ["permanent"],
-                                   "min_service_months": 12, "service_as_on": "2026-04-01",
-                                   "exclude_probation": true, "exclude_notice_period": true},
+                 "applicability": {%s "all_departments": true,
+                                   "goal_setting": {"employment_types": ["permanent", "probationary", "trainee"],
+                                                    "min_service_months": 0},
+                                   "appraisal": {"employment_types": ["permanent"], "min_service_months": 12,
+                                                 "service_as_on": "2026-04-01"},
+                                   "exclude_notice_period": true},
                  "finalize": {"rating_scale_id": %s, "notify_managers": true, "notify_employees": true,
                               "notify_hod": false, "notify_hr": true},
                  "current_step": 3}
@@ -388,7 +393,10 @@ class PmsApiTest {
         assertThat(created.get("stages").size()).isEqualTo(9);
         assertThat(created.get("stages").get(0).get("stage").asString()).isEqualTo("goal_setting");
         assertThat(created.get("applicability").get("plant_ids").get(0).asString()).isEqualTo(PLANT_1);
-        assertThat(created.get("applicability").get("employment_types").get(0).asString()).isEqualTo("permanent");
+        assertThat(created.get("applicability").get("goal_setting").get("employment_types").size()).isEqualTo(3);
+        assertThat(created.get("applicability").get("appraisal").get("employment_types").get(0).asString())
+                .isEqualTo("permanent");
+        assertThat(created.get("applicability").get("appraisal").get("min_service_months").asInt()).isEqualTo(12);
         assertThat(created.get("finalize").get("notify_hod").asBoolean()).isFalse();
         assertThat(created.get("created_on").isNull()).isFalse();
 
@@ -409,14 +417,17 @@ class PmsApiTest {
                 {"basic": {"name": "%s renamed", "type": "mid_year", "period_start": "2026-04-01", "period_end": "2026-09-30"},
                  "stages": %s,
                  "applicability": {"all_plants": true, "all_departments": false,
-                   "department_ids": ["%s"], "employment_types": ["permanent", "contract"],
-                   "min_service_months": 6, "service_as_on": "2026-04-01"}}
+                   "department_ids": ["%s"],
+                   "goal_setting": {"employment_types": ["permanent", "contract"], "min_service_months": 0},
+                   "appraisal": {"employment_types": ["permanent", "contract"], "min_service_months": 6,
+                                 "service_as_on": "2026-04-01"}}}
                 """.formatted(name, stagesJson(true), DEPT)), 200);
         assertThat(updated.get("basic").get("type").asString()).isEqualTo("mid_year");
         assertThat(updated.get("applicable_to").asString()).isEqualTo("All Plants");
         assertThat(updated.get("applicability").get("department_ids").get(0).asString()).isEqualTo(DEPT);
         assertThat(updated.get("applicability").get("plant_ids").size()).isZero();
-        assertThat(updated.get("applicability").get("employment_types").size()).isEqualTo(2);
+        assertThat(updated.get("applicability").get("goal_setting").get("employment_types").size()).isEqualTo(2);
+        assertThat(updated.get("applicability").get("appraisal").get("employment_types").size()).isEqualTo(2);
         assertThat(updated.get("finalize").get("rating_scale_id").asString()).isEqualTo(scale); // untouched
         assertThat(updated.get("cycle_code").asString()).startsWith("PMS-2627-A");
 

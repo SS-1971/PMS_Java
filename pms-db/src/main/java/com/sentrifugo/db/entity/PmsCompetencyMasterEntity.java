@@ -1,5 +1,6 @@
 package com.sentrifugo.db.entity;
 
+import com.sentrifugo.db.enums.PmsCompetencyType;
 import com.sentrifugo.db.enums.PmsMasterStatus;
 import jakarta.persistence.*;
 import lombok.*;
@@ -34,6 +35,13 @@ public class PmsCompetencyMasterEntity extends BaseEntity<UUID> {
 
     @Column(name = "category", nullable = false, length = 100)
     private String category;
+
+    /** Who rates it: HR or the manager. Drives the appraisal screens and the goal template step. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "competency_type", nullable = false, length = 20,
+            columnDefinition = "varchar(20) default 'MANAGER'")
+    @Builder.Default
+    private PmsCompetencyType competencyType = PmsCompetencyType.MANAGER;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)

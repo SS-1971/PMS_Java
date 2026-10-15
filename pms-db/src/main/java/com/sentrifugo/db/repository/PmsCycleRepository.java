@@ -19,4 +19,8 @@ public interface PmsCycleRepository extends JpaRepository<PmsCycleEntity, UUID>,
     Optional<PmsCycleEntity> findByIdAndOrganisationId(UUID id, String organisationId);
 
     boolean existsByCycleCode(String cycleCode);
+
+    /** The organisation's cycles in one state, e.g. the active ones that set goal-acknowledgement deadlines. */
+    java.util.List<PmsCycleEntity> findByOrganisationIdAndStatus(
+            String organisationId, com.sentrifugo.db.enums.PmsCycleStatus status);
 }

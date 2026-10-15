@@ -47,6 +47,8 @@ public record PmsGoalTemplateResponse(
             @JsonProperty("competency_id") UUID competencyId,
             @JsonProperty("name") String name,
             @JsonProperty("category") String category,
+            /** {@code hr} or {@code manager}. */
+            @JsonProperty("type") String type,
             @JsonProperty("weightage") BigDecimal weightage) {
     }
 }

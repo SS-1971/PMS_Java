@@ -45,18 +45,30 @@ public record PmsCycleRequest(
 
     /**
      * Screen 1.4. Plant and department ids are Sentrifugo ids; employment types are
-     * {@code permanent | contract | trainee}.
+     * {@code permanent | contract | probationary | trainee}. Who gets goals ({@code goal_setting}) and who is
+     * rated ({@code appraisal}) carry their own employment types and minimum service.
      */
     public record Applicability(
             @JsonProperty("all_plants") Boolean allPlants,
             @JsonProperty("plant_ids") List<String> plantIds,
             @JsonProperty("all_departments") Boolean allDepartments,
             @JsonProperty("department_ids") List<String> departmentIds,
+            @JsonProperty("goal_setting") @Valid GoalSetting goalSetting,
+            @JsonProperty("appraisal") @Valid Appraisal appraisal,
+            @JsonProperty("exclude_notice_period") Boolean excludeNoticePeriod) {
+    }
+
+    /** Goal Setting - who gets goals. */
+    public record GoalSetting(
+            @JsonProperty("employment_types") List<String> employmentTypes,
+            @JsonProperty("min_service_months") @Min(0) Integer minServiceMonths) {
+    }
+
+    /** Appraisal - who is rated: service must be complete on or before {@code service_as_on}. */
+    public record Appraisal(
             @JsonProperty("employment_types") List<String> employmentTypes,
             @JsonProperty("min_service_months") @Min(0) Integer minServiceMonths,
-            @JsonProperty("service_as_on") LocalDate serviceAsOn,
-            @JsonProperty("exclude_probation") Boolean excludeProbation,
-            @JsonProperty("exclude_notice_period") Boolean excludeNoticePeriod) {
+            @JsonProperty("service_as_on") LocalDate serviceAsOn) {
     }
 
     /** Screen 1.5. */
