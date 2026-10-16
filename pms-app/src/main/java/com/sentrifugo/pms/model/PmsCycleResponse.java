@@ -41,11 +41,20 @@ public record PmsCycleResponse(
             @JsonProperty("plant_ids") List<String> plantIds,
             @JsonProperty("all_departments") boolean allDepartments,
             @JsonProperty("department_ids") List<String> departmentIds,
+            @JsonProperty("goal_setting") GoalSetting goalSetting,
+            @JsonProperty("appraisal") Appraisal appraisal,
+            @JsonProperty("exclude_notice_period") boolean excludeNoticePeriod) {
+    }
+
+    public record GoalSetting(
+            @JsonProperty("employment_types") List<String> employmentTypes,
+            @JsonProperty("min_service_months") Integer minServiceMonths) {
+    }
+
+    public record Appraisal(
             @JsonProperty("employment_types") List<String> employmentTypes,
             @JsonProperty("min_service_months") Integer minServiceMonths,
-            @JsonProperty("service_as_on") LocalDate serviceAsOn,
-            @JsonProperty("exclude_probation") boolean excludeProbation,
-            @JsonProperty("exclude_notice_period") boolean excludeNoticePeriod) {
+            @JsonProperty("service_as_on") LocalDate serviceAsOn) {
     }
 
     public record Finalize(
@@ -53,6 +62,8 @@ public record PmsCycleResponse(
             @JsonProperty("notify_managers") Boolean notifyManagers,
             @JsonProperty("notify_employees") Boolean notifyEmployees,
             @JsonProperty("notify_hod") Boolean notifyHod,
-            @JsonProperty("notify_hr") Boolean notifyHr) {
+            @JsonProperty("notify_hr") Boolean notifyHr,
+            @JsonProperty("notify_gp") Boolean notifyGp,
+            @JsonProperty("approval_workflow_id") UUID approvalWorkflowId) {
     }
 }

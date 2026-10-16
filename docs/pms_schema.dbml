@@ -1,0 +1,1063 @@
+// PMS database structure (schema `pms`, PostgreSQL).
+// Generated from the JPA entities in pms-db/src/main/java/com/sentrifugo/db/entity.
+// Paste into https://dbdiagram.io/d to see the diagram.
+
+Project pms {
+  database_type: 'PostgreSQL'
+  Note: 'Performance Management System. Ids are UUIDs. Organisation, user, plant, department and designation ids are IAM ids kept as plain strings (no foreign key).'
+}
+
+Enum pms.pms_appraisal_line_type {
+  KRA
+  COMPETENCY
+  HR_COMPETENCY
+}
+
+Enum pms.pms_assignment_status {
+  DRAFT
+  SENT_TO_EMPLOYEE
+  ACKNOWLEDGED
+  CHANGE_REQUESTED
+  WITH_HOD
+  APPROVED
+}
+
+Enum pms.pms_change_decision {
+  REVISED
+  UNCHANGED
+}
+
+Enum pms.pms_change_request_status {
+  REQUESTED
+  RESPONDED
+}
+
+Enum pms.pms_cycle_stage_type {
+  GOAL_SETTING
+  EMPLOYEE_ACKNOWLEDGEMENT
+  HOD_APPROVAL
+  PROGRESS_TRACKING
+  MID_YEAR_REVIEW
+  SELF_APPRAISAL
+  MANAGER_APPRAISAL
+  HOD_REVIEW
+  HR_COMPETENCY_RATING
+  CALIBRATION_FINAL_APPROVAL
+  APPROVAL_PUBLISH
+}
+
+Enum pms.pms_cycle_status {
+  DRAFT
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+Enum pms.pms_cycle_type {
+  ANNUAL
+  MID_YEAR
+  CUSTOM
+}
+
+Enum pms.pms_eligibility_run_status {
+  STARTED
+  COMPLETED
+  FAILED
+}
+
+Enum pms.pms_employment_scope {
+  GOAL_SETTING
+  APPRAISAL
+}
+
+Enum pms.pms_employment_type {
+  PERMANENT
+  CONTRACT
+  PROBATIONARY
+  TRAINEE
+}
+
+Enum pms.pms_hr_rating_status {
+  PENDING
+  DRAFT
+  SUBMITTED
+}
+
+Enum pms.pms_manager_appraisal_status {
+  PENDING
+  DRAFT
+  SUBMITTED_TO_HOD
+}
+
+Enum pms.pms_master_status {
+  ACTIVE
+  INACTIVE
+}
+
+Enum pms.pms_mid_year_status {
+  NOT_STARTED
+  COMPLETED_NO_REVISION
+  REVISION_REQUESTED
+}
+
+Enum pms.pms_notification_audience {
+  HOD_REVIEWERS
+  REPORTING_MANAGERS
+  EMPLOYEES
+  HR
+  GP
+}
+
+Enum pms.pms_notification_status {
+  PENDING
+  SENT
+  FAILED
+  PARTIAL
+}
+
+Enum pms.pms_progress_period {
+  CURRENT
+  H1
+  FY
+}
+
+Enum pms.pms_revision_source {
+  HOD_APPROVED
+  MANAGER_REVISED
+}
+
+Enum pms.pms_revision_status {
+  PENDING_HOD
+  APPROVED
+  REJECTED
+}
+
+Enum pms.pms_self_appraisal_status {
+  NOT_SUBMITTED
+  DRAFT
+  SUBMITTED
+}
+
+Enum pms.pms_target_type {
+  COMMON
+  INDIVIDUAL
+}
+
+Enum pms.pms_template_status {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+Enum pms.pms_transfer_kra_source {
+  TEMPLATE
+  MANAGER
+}
+
+Enum pms.pms_transfer_status {
+  PENDING
+  DRAFT
+  SENT
+}
+
+Table pms.pms_cycle {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  cycle_code varchar(30) [not null, note: 'Unique']
+  name varchar(200) [not null]
+  description text
+  type pms.pms_cycle_type [not null]
+  period_start date [not null]
+  period_end date [not null]
+  status pms.pms_cycle_status [not null]
+  rating_scale_id uuid
+  notify_managers boolean [not null]
+  notify_employees boolean [not null]
+  notify_hod boolean [not null]
+  notify_hr boolean [not null]
+  notify_gp boolean [not null, note: 'Screen 1.5 "Notify GP". The columns above map to Section Heads, Employees, Functional Heads and Plant Heads / Plant HR. Default: boolean default false not null']
+  approval_workflow_id uuid [note: 'The approval workflow chosen on screen 1.5; null when none was picked.']
+  current_step integer [not null]
+  completed_step integer [not null]
+  published_on timestamp
+
+  indexes {
+    organisation_id [name: 'idx_pms_cycle_org']
+    status [name: 'idx_pms_cycle_status']
+    type [name: 'idx_pms_cycle_type']
+    period_start [name: 'idx_pms_cycle_period_start']
+    created_date [name: 'idx_pms_cycle_created_date']
+    rating_scale_id [name: 'idx_pms_cycle_rating_scale']
+  }
+}
+
+Table pms.pms_cycle_stage {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  cycle_id uuid [not null]
+  stage pms.pms_cycle_stage_type [not null]
+  start_date date
+  end_date date
+  notification_enabled boolean [not null]
+
+  indexes {
+    (cycle_id, stage) [unique, name: 'uk_pms_cycle_stage_cycle_stage']
+    cycle_id [name: 'idx_pms_cycle_stage_cycle']
+    stage [name: 'idx_pms_cycle_stage_stage']
+  }
+
+  Note: 'Screen 1.3 - one timeline row per stage of a cycle.'
+}
+
+Table pms.pms_cycle_applicability {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  cycle_id uuid [not null]
+  all_plants boolean [not null]
+  all_departments boolean [not null]
+  minimum_service_months integer
+  appraisal_minimum_service_months integer [note: 'Minimum service for the appraisal half; `minimum_service_months` is the goal-setting half.']
+  service_calculated_as_on date [note: 'The appraisal rule: service must be complete on or before this date.']
+  exclude_probation boolean [not null]
+  exclude_notice_period boolean [not null]
+
+  Note: 'Screen 1.4 - who a cycle covers (one row per cycle). Plants, departments and employment types are child tables.'
+}
+
+Table pms.pms_cycle_plant {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  cycle_id uuid [not null]
+  plant_id varchar(255) [not null]
+
+  indexes {
+    (cycle_id, plant_id) [unique, name: 'uk_pms_cycle_plant_cycle_plant']
+    cycle_id [name: 'idx_pms_cycle_plant_cycle']
+    plant_id [name: 'idx_pms_cycle_plant_plant']
+  }
+
+  Note: 'Screen 1.4 - a plant a cycle applies to. The plant master lives in the existing Sentrifugo system; only its id is stored.'
+}
+
+Table pms.pms_cycle_department {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  cycle_id uuid [not null]
+  department_id varchar(255) [not null]
+
+  indexes {
+    (cycle_id, department_id) [unique, name: 'uk_pms_cycle_department_cycle_dept']
+    cycle_id [name: 'idx_pms_cycle_department_cycle']
+    department_id [name: 'idx_pms_cycle_department_dept']
+  }
+
+  Note: 'Screen 1.4 - a department a cycle applies to. The department master lives in the existing Sentrifugo system.'
+}
+
+Table pms.pms_cycle_employment_type {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  cycle_id uuid [not null]
+  scope pms.pms_employment_scope [not null]
+  employment_type pms.pms_employment_type [not null]
+
+  indexes {
+    (cycle_id, scope, employment_type) [unique, name: 'uk_pms_cycle_employment_type_cycle_scope_type']
+    cycle_id [name: 'idx_pms_cycle_employment_type_cycle']
+  }
+
+  Note: 'Screen 1.4 - an employment type a cycle applies to, for goal setting or for the appraisal.'
+}
+
+Table pms.pms_cycle_eligibility_run {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  cycle_id uuid [not null]
+  status pms.pms_eligibility_run_status [not null]
+  started_on timestamp [not null]
+  completed_on timestamp
+  total_eligible integer [not null]
+  excluded_probation integer [not null]
+  excluded_notice_period integer [not null]
+  excluded_min_service integer [not null]
+  error_message text
+
+  indexes {
+    cycle_id [name: 'idx_pms_cycle_eligibility_run_cycle']
+    status [name: 'idx_pms_cycle_eligibility_run_status']
+    started_on [name: 'idx_pms_cycle_eligibility_run_started']
+  }
+
+  Note: 'Screen 1.6 - outcome of the eligibility processing started when a cycle is published.'
+}
+
+Table pms.pms_cycle_notification {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  cycle_id uuid [not null]
+  audience pms.pms_notification_audience [not null]
+  sent_count integer [not null]
+  status pms.pms_notification_status [not null]
+  sent_on timestamp
+  error_message text
+
+  indexes {
+    cycle_id [name: 'idx_pms_cycle_notification_cycle']
+    audience [name: 'idx_pms_cycle_notification_audience']
+    status [name: 'idx_pms_cycle_notification_status']
+  }
+
+  Note: 'Screen 1.6 - notification sent to one audience when a cycle is published.'
+}
+
+Table pms.kra_master {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  name varchar(200) [not null]
+  status pms.pms_master_status [not null]
+
+  indexes {
+    organisation_id [name: 'idx_kra_master_org']
+    status [name: 'idx_kra_master_status']
+    name [name: 'idx_kra_master_name']
+  }
+
+  Note: 'Screens 2.5 and 2.6 - Key Result Area master.'
+}
+
+Table pms.kpi_master {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  kra_id uuid [not null]
+  name varchar(200) [not null]
+  unit varchar(50) [not null]
+  target_type pms.pms_target_type [not null]
+  expected_outcome varchar(500)
+  evidence_required varchar(500)
+  status pms.pms_master_status [not null]
+
+  indexes {
+    organisation_id [name: 'idx_kpi_master_org']
+    kra_id [name: 'idx_kpi_master_kra']
+    status [name: 'idx_kpi_master_status']
+    name [name: 'idx_kpi_master_name']
+  }
+
+  Note: 'Screens 2.7 and 2.8 - Key Performance Indicator master, always under one KRA.'
+}
+
+Table pms.competency_master {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  name varchar(200) [not null]
+  category varchar(100) [not null]
+  status pms.pms_master_status [not null]
+
+  indexes {
+    organisation_id [name: 'idx_competency_master_org']
+    category [name: 'idx_competency_master_category']
+    status [name: 'idx_competency_master_status']
+    name [name: 'idx_competency_master_name']
+  }
+
+  Note: 'Screen 2.9 - competency master.'
+}
+
+Table pms.standard_rating_level {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  label varchar(100) [not null]
+  definition varchar(500)
+  colour_code varchar(7) [note: 'Hex colour, e.g. #16A34A.']
+  status pms.pms_master_status [not null]
+
+  indexes {
+    organisation_id [name: 'idx_standard_rating_level_org']
+    status [name: 'idx_standard_rating_level_status']
+  }
+
+  Note: 'A reusable rating level kept in the master list (the "standards" a rating scale is built from). Score ranges are not stored here: each scale sets its own.'
+}
+
+Table pms.rating_scale {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  name varchar(150) [not null]
+  description text
+  status pms.pms_master_status [not null]
+  is_default boolean [not null]
+  show_definitions_to_employees boolean [not null]
+
+  indexes {
+    organisation_id [name: 'idx_rating_scale_org']
+    status [name: 'idx_rating_scale_status']
+    is_default [name: 'idx_rating_scale_default']
+  }
+
+  Note: 'Screens 1.5 and 2.10 - an organisation\'s rating scale; its levels are PmsRatingScaleLevelEntity.'
+}
+
+Table pms.rating_scale_level {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  rating_scale_id uuid [not null]
+  rating_value integer [not null]
+  label varchar(100) [not null]
+  definition text
+  minimum_score numeric(5,2)
+  maximum_score numeric(5,2)
+  colour_code varchar(20)
+  display_order integer
+
+  indexes {
+    (rating_scale_id, rating_value) [unique, name: 'uk_rating_scale_level_scale_value']
+    rating_scale_id [name: 'idx_rating_scale_level_scale']
+  }
+
+  Note: 'Screen 2.10 - one rating value on a scale, e.g. 5 / Outstanding / 4.50-5.00 / green.'
+}
+
+Table pms.goal_template {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  financial_year varchar(20) [not null]
+  template_name varchar(200) [not null]
+  description text
+  department_id varchar(255) [not null]
+  role_id varchar(255) [not null]
+  plant_id varchar(255) [note: 'Shown on screen 2.1; may be derived from role/department.']
+  effective_from date [not null]
+  status pms.pms_template_status [not null]
+
+  indexes {
+    organisation_id [name: 'idx_goal_template_org']
+    financial_year [name: 'idx_goal_template_fy']
+    department_id [name: 'idx_goal_template_department']
+    role_id [name: 'idx_goal_template_role']
+    plant_id [name: 'idx_goal_template_plant']
+    status [name: 'idx_goal_template_status']
+    effective_from [name: 'idx_goal_template_effective_from']
+  }
+
+  Note: 'Screens 2.1 and 2.2 - a role-based goal template. Department, role and plant ids belong to the existing Sentrifugo system.'
+}
+
+Table pms.goal_template_kra {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  template_id uuid [not null]
+  kra_id uuid [not null]
+  display_order integer
+
+  indexes {
+    (template_id, kra_id) [unique, name: 'uk_goal_template_kra_template_kra']
+    template_id [name: 'idx_goal_template_kra_template']
+    kra_id [name: 'idx_goal_template_kra_kra']
+  }
+
+  Note: 'Screen 2.3 - a KRA selected into a goal template.'
+}
+
+Table pms.goal_template_kpi {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  template_id uuid [not null]
+  kra_id uuid [not null]
+  kpi_id uuid [not null]
+  weightage numeric(5,2) [not null]
+  target_type pms.pms_target_type [not null]
+  display_order integer
+
+  indexes {
+    (template_id, kpi_id) [unique, name: 'uk_goal_template_kpi_template_kpi']
+    template_id [name: 'idx_goal_template_kpi_template']
+    kra_id [name: 'idx_goal_template_kpi_kra']
+    kpi_id [name: 'idx_goal_template_kpi_kpi']
+  }
+
+  Note: 'Screen 2.3 - a KPI selected into a goal template, with its template-specific weightage and target type.'
+}
+
+Table pms.goal_template_competency {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  template_id uuid [not null]
+  competency_id uuid [not null]
+  weightage numeric(5,2) [not null]
+  display_order integer
+
+  indexes {
+    (template_id, competency_id) [unique, name: 'uk_goal_template_competency_template_competency']
+    template_id [name: 'idx_goal_template_competency_template']
+    competency_id [name: 'idx_goal_template_competency_competency']
+  }
+
+  Note: 'Screen 2.4 - a competency selected into a goal template, with its weightage.'
+}
+
+Table pms.goal_assignment {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  employee_user_id varchar(255) [not null, note: 'IAM user id of the employee being assigned goals.']
+  manager_user_id varchar(255) [not null, note: 'IAM user id of the manager who set the targets.']
+  financial_year varchar(20) [not null]
+  template_id uuid [not null, note: 'The goal template the targets were set against.']
+  status pms.pms_assignment_status [not null]
+  sent_on timestamp
+  employee_name varchar(200) [note: 'Snapshot of the employee\'s details, so the HOD list needs no IAM lookup.']
+  emp_code varchar(50)
+  designation_name varchar(200)
+  manager_name varchar(200) [note: 'The setting manager\'s name and the employee\'s department id, for the HR screens.']
+  department_id varchar(64)
+  acknowledged_on timestamp
+  acknowledge_comment varchar(500) [note: 'The employee\'s optional comment when acknowledging the goals (screen 4.3).']
+  change_kpi_id uuid [note: 'Employee\'s change request: which KPI, why, and the target they propose.']
+  change_reason text
+  change_proposed_target numeric(14,2)
+  change_requested_on timestamp
+  hod_remarks text
+  approved_on timestamp
+
+  indexes {
+    (organisation_id, employee_user_id, financial_year) [unique, name: 'uk_goal_assignment_employee_fy']
+    manager_user_id [name: 'idx_goal_assignment_manager']
+    status [name: 'idx_goal_assignment_status']
+  }
+
+  Note: 'One manager\'s goal assignment to one employee for one financial year: the targets the manager set, and where they stand. Created on the first save; employees with no row are "Not Started".'
+}
+
+Table pms.goal_assignment_target {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  assignment_id uuid [not null]
+  kpi_id uuid [not null]
+  weight numeric(5,2) [not null, note: 'Share of the total KPI weightage, out of 100.']
+  target numeric(14,2) [note: 'Numeric target. Null until the manager fills it in.']
+  original_target numeric(14,2) [note: 'The target the manager first assigned. Revisions never change it: the employee always sees this in the Target column, and a revised target is shown beside it. Null until the sheet is first sent.']
+  sent_target numeric(14,2) [note: 'The target as it stood when the sheet was last sent to the employee. Save Draft rewrites `target`, so this is what a revised target is compared with. Null until the sheet is first sent.']
+
+  indexes {
+    (assignment_id, kpi_id) [unique, name: 'uk_goal_assignment_target_kpi']
+    assignment_id [name: 'idx_goal_assignment_target_assignment']
+  }
+
+  Note: 'One KPI\'s weight and target inside a goal assignment.'
+}
+
+Table pms.goal_change_request {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  assignment_id uuid [not null]
+  kpi_id uuid [not null]
+  revision_no integer [not null, note: '1 for the first request on this KPI, then 2, 3 ...']
+  requested_by varchar(64) [not null]
+  requested_on timestamp [not null]
+  target_at_request numeric(14,2) [note: 'The target the employee was looking at when asking.']
+  proposed_target numeric(14,2)
+  reason text [not null]
+  status pms.pms_change_request_status [not null]
+  decision pms.pms_change_decision
+  final_target numeric(14,2) [note: 'The target the manager sent back (equal to `targetAtRequest` when kept).']
+  manager_remarks text
+  responded_by varchar(64)
+  responded_on timestamp
+  acknowledged_on timestamp [note: 'When the employee acknowledged the sheet that carried the manager\'s answer.']
+
+  indexes {
+    (assignment_id, kpi_id, revision_no) [unique, name: 'uk_goal_change_request_no']
+    assignment_id [name: 'idx_goal_change_request_assignment']
+  }
+
+  Note: 'One employee request to change one KPI target (screen 4.2), kept permanently with the manager\'s answer. `revisionNo` counts the requests made for that KPI on that sheet: 1, 2, 3 ...'
+}
+
+Table pms.goal_sheet_history {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  assignment_id uuid [not null]
+  request_type varchar(20) [not null, note: '`goal_sheet` or `target_revision`.']
+  request_ref uuid [note: 'The target revision this step belongs to; null for the goal sheet. Groups steps into one request.']
+  action varchar(30) [not null, note: 'sent, requested_change, answered, acknowledged, sent_to_hod, revision_requested, approved, returned.']
+  actor_user_id varchar(64) [not null]
+  actor_name varchar(200)
+  actor_role varchar(20) [not null, note: 'manager, employee or hod.']
+  kpi_id uuid
+  kpi_name varchar(255)
+  unit varchar(50)
+  target_before numeric(14,2)
+  target_after numeric(14,2)
+  more_changes integer [not null, note: 'How many other KPIs moved in the same step; the row names only the first.']
+  summary varchar(500) [note: 'Plain-language line shown on the trail.']
+  remarks varchar(500)
+  occurred_on timestamp [not null]
+
+  indexes {
+    assignment_id [name: 'idx_goal_sheet_history_assignment']
+    (actor_role, action) [name: 'idx_goal_sheet_history_actor']
+  }
+
+  Note: 'One step in the life of a goal sheet or a mid-year target revision: who did what, when, with the target before and after. Written by the goal-setting actions and read by the HOD history and trail screens.'
+}
+
+Table pms.goal_transfer {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  employee_user_id varchar(255) [not null]
+  financial_year varchar(20) [not null]
+  employee_name varchar(200) [note: 'Snapshot of the employee, so the sheet needs no IAM lookup.']
+  emp_code varchar(50)
+  new_manager_user_id varchar(255) [not null]
+  previous_manager_name varchar(200)
+  from_department varchar(200)
+  to_department varchar(200)
+  previous_period_label varchar(100) [note: 'E.g. "Apr - Sep 2026".']
+  joined_on date [not null]
+  recorded_by varchar(200)
+  recorded_on date
+  status pms.pms_transfer_status [not null]
+  reason varchar(100)
+  remarks text
+
+  indexes {
+    (organisation_id, employee_user_id, financial_year) [unique, name: 'uk_goal_transfer_employee_fy']
+    new_manager_user_id [name: 'idx_goal_transfer_manager']
+  }
+
+  Note: 'An employee who moved into a manager team part-way through the year (screens 3.6 and 3.8). HR records the transfer; the new manager then sets the employee period 2 KRAs.'
+}
+
+Table pms.goal_transfer_kra {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  transfer_id uuid [not null]
+  period integer [not null, note: '1 = before the transfer, 2 = after.']
+  kra_name varchar(200) [not null]
+  source pms.pms_transfer_kra_source [not null]
+  source_label varchar(100)
+  weight numeric(5,2) [not null]
+  target numeric(14,2)
+  unit varchar(50)
+  display_order integer
+
+  indexes {
+    transfer_id [name: 'idx_goal_transfer_kra_transfer']
+  }
+
+  Note: 'One KRA row of a transfer sheet. Period 1 rows are frozen at the transfer date; period 2 rows are editable.'
+}
+
+Table pms.goal_progress {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  assignment_id uuid [not null]
+  kpi_id uuid [not null]
+  period_code pms.pms_progress_period [not null]
+  actual numeric(14,2)
+  comment text
+  attachment_name varchar(255)
+  status varchar(20) [note: 'The employee own status for this KPI: on_track, at_risk or off_track.']
+  submitted_on timestamp [note: 'When the employee submitted this period to the manager; null while it is a draft. Submitted rows are frozen.']
+
+  indexes {
+    (assignment_id, kpi_id, period_code) [unique, name: 'uk_goal_progress_assignment_kpi_period']
+    assignment_id [name: 'idx_goal_progress_assignment']
+  }
+
+  Note: 'An actual reported against one KPI of a goal sheet, for one reading (current, half-year or year-end).'
+}
+
+Table pms.mid_year_review {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  assignment_id uuid [not null]
+  discussion_notes text
+  revision_required boolean
+  status pms.pms_mid_year_status [not null]
+  reviewed_on timestamp
+
+  indexes {
+    assignment_id [unique, name: 'uk_mid_year_review_assignment']
+  }
+
+  Note: 'The manager mid-year review of one goal sheet (screens 3.10 - 3.11).'
+}
+
+Table pms.target_revision {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  assignment_id uuid [not null]
+  attachment_name varchar(255)
+  status pms.pms_revision_status [not null]
+  requested_by varchar(255) [not null]
+  requested_on timestamp [not null]
+  source pms.pms_revision_source [note: 'Null on rows from before this column existed, which are HOD-approved revisions.']
+  approved_by varchar(200) [note: 'Name of the HOD who approved the revision, or the manager who revised the targets.']
+  approved_on timestamp
+  acknowledged_on timestamp [note: 'When the employee acknowledged the revised targets (screen 4.5). Null while it is waiting for them.']
+
+  indexes {
+    assignment_id [name: 'idx_target_revision_assignment']
+  }
+
+  Note: 'A target revision the manager raised at mid-year, waiting for the HOD (screen 3.12).'
+}
+
+Table pms.target_revision_row {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  revision_id uuid [not null]
+  kpi_id uuid [not null]
+  previous_target numeric(14,2)
+  revised_target numeric(14,2) [not null]
+  reason varchar(500) [not null]
+  decision varchar(20) [note: 'HOD decision for this KPI: null while waiting, then `approved` or `returned`.']
+  hod_remarks varchar(500)
+
+  indexes {
+    revision_id [name: 'idx_target_revision_row_revision']
+  }
+
+  Note: 'One KPI target changed by a revision request. Weights and KRAs are locked at mid-year.'
+}
+
+Table pms.appraisal {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  assignment_id uuid [not null]
+  self_status pms.pms_self_appraisal_status [not null]
+  self_score numeric(4,2) [note: 'Mean of the self ratings, set when the self appraisal is submitted.']
+  self_submitted_on timestamp
+  manager_status pms.pms_manager_appraisal_status [not null]
+  recommended_rating integer
+  manager_comments text
+  manager_submitted_on timestamp
+  hod_rating integer [note: 'The HOD / functional head\'s overall rating. Written by the HOD review; read by HR and calibration.']
+  hod_rated_on timestamp
+  hr_status pms.pms_hr_rating_status [note: 'Null until Corporate HR opens the employee; read as `PENDING`.']
+  hr_remarks text
+  hr_submitted_on timestamp
+  sent_to_calibration_on timestamp [note: 'Set when HR sends the rated employee on to calibration (screen 1.7).']
+  calibrated_rating integer [note: 'HR\'s calibrated final rating and why it differs from the rating it started at (screen 1.9).']
+  calibration_reason text
+  published_on timestamp [note: 'Set when the calibrated ratings are approved and published; locks the rating.']
+
+  indexes {
+    assignment_id [unique, name: 'uk_appraisal_assignment']
+    manager_status [name: 'idx_appraisal_manager_status']
+  }
+
+  Note: 'One employee year-end appraisal: the self appraisal and the manager rating (screens 3.13 - 3.14).'
+}
+
+Table pms.appraisal_line {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  appraisal_id uuid [not null]
+  line_type pms.pms_appraisal_line_type [not null]
+  ref_id uuid [not null, note: 'The KPI id or the competency id, per the line type.']
+  self_rating integer
+  manager_rating integer
+  hod_rating integer [note: 'The HOD\'s rating of a manager competency; written by the HOD review.']
+  hr_rating integer [note: 'Corporate HR\'s rating of an HR competency. Its remark is kept in `comment`.']
+  comment text
+  attachment_name varchar(255)
+  actual numeric(14,2) [note: 'The employee own figure for a KRA line in the self appraisal.']
+  evidence varchar(500) [note: 'What the employee achieved, in their words (KRA lines).']
+  self_comment varchar(500) [note: 'The employee comment on a competency line; kept apart from the manager and HR comments.']
+
+  indexes {
+    (appraisal_id, line_type, ref_id) [unique, name: 'uk_appraisal_line_ref']
+    appraisal_id [name: 'idx_appraisal_line_appraisal']
+  }
+
+  Note: 'One rated item of an appraisal: a KPI, a manager competency or an HR competency.'
+}
+
+Table pms.calibration_distribution {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  financial_year varchar(20) [not null]
+  rating integer [not null]
+  hr_percent integer [not null, note: 'Share of employees HR wants at this rating, 0-100.']
+
+  indexes {
+    (organisation_id, financial_year, rating) [unique, name: 'uk_calibration_distribution']
+  }
+
+  Note: 'HR\'s normalization target for one rating level in one financial year (screen 1.9).'
+}
+
+Table pms.approval_workflow {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  name varchar(200) [not null]
+  description varchar(500)
+  steps text [not null, note: 'Approver labels in order, separated by new lines.']
+  status pms.pms_master_status [not null]
+
+  indexes {
+    organisation_id [name: 'idx_approval_workflow_org']
+    name [name: 'idx_approval_workflow_name']
+  }
+
+  Note: 'Approval Workflow master: the named chain of approvers a cycle uses (screen 1.5 picks one). The steps are kept in order, one approver label per line, e.g. Section Head, Functional Head, Plant HR, Corporate HR, GP.'
+}
+
+Table pms.user_notification {
+  id uuid [pk, not null, note: 'Primary key, assigned by the application']
+  created_by varchar(255) [note: 'IAM user id that created the row']
+  modified_by varchar(255) [note: 'IAM user id that last changed the row']
+  created_date timestamp
+  modified_date timestamp
+  is_active boolean [not null, default: true, note: 'Soft-delete flag']
+  organisation_id varchar(255) [not null]
+  user_id varchar(64) [not null, note: 'IAM user id of the recipient.']
+  cycle_id uuid
+  audience pms.pms_notification_audience
+  title varchar(200) [not null]
+  message varchar(1000) [not null]
+  link_path varchar(200) [note: 'Screen the notification opens, e.g. `/pms/my-goals/2026`.']
+  read_on timestamp [note: 'Null while unread.']
+
+  indexes {
+    (organisation_id, user_id) [name: 'idx_user_notification_user']
+    cycle_id [name: 'idx_user_notification_cycle']
+  }
+
+  Note: 'One in-app notification for one user (the bell): written when a cycle is published, read by the user.'
+}
+
+// Foreign keys
+Ref: pms.appraisal.assignment_id > pms.goal_assignment.id
+Ref: pms.appraisal_line.appraisal_id > pms.appraisal.id
+Ref: pms.goal_assignment_target.assignment_id > pms.goal_assignment.id
+Ref: pms.goal_assignment_target.kpi_id > pms.kpi_master.id
+Ref: pms.goal_change_request.assignment_id > pms.goal_assignment.id
+Ref: pms.goal_change_request.kpi_id > pms.kpi_master.id
+Ref: pms.goal_progress.assignment_id > pms.goal_assignment.id
+Ref: pms.goal_progress.kpi_id > pms.kpi_master.id
+Ref: pms.goal_sheet_history.assignment_id > pms.goal_assignment.id
+Ref: pms.goal_template_competency.competency_id > pms.competency_master.id
+Ref: pms.goal_template_competency.template_id > pms.goal_template.id
+Ref: pms.goal_template_kpi.kpi_id > pms.kpi_master.id
+Ref: pms.goal_template_kpi.kra_id > pms.kra_master.id
+Ref: pms.goal_template_kpi.template_id > pms.goal_template.id
+Ref: pms.goal_template_kra.kra_id > pms.kra_master.id
+Ref: pms.goal_template_kra.template_id > pms.goal_template.id
+Ref: pms.goal_transfer_kra.transfer_id > pms.goal_transfer.id
+Ref: pms.kpi_master.kra_id > pms.kra_master.id
+Ref: pms.mid_year_review.assignment_id > pms.goal_assignment.id
+Ref: pms.pms_cycle_applicability.cycle_id > pms.pms_cycle.id
+Ref: pms.pms_cycle_department.cycle_id > pms.pms_cycle.id
+Ref: pms.pms_cycle_eligibility_run.cycle_id > pms.pms_cycle.id
+Ref: pms.pms_cycle_employment_type.cycle_id > pms.pms_cycle.id
+Ref: pms.pms_cycle_notification.cycle_id > pms.pms_cycle.id
+Ref: pms.pms_cycle_plant.cycle_id > pms.pms_cycle.id
+Ref: pms.pms_cycle_stage.cycle_id > pms.pms_cycle.id
+Ref: pms.rating_scale_level.rating_scale_id > pms.rating_scale.id
+Ref: pms.target_revision.assignment_id > pms.goal_assignment.id
+Ref: pms.target_revision_row.kpi_id > pms.kpi_master.id
+Ref: pms.target_revision_row.revision_id > pms.target_revision.id
+
+// References that are not database foreign keys (kept consistent by the service layer)
+// Ref: pms.pms_cycle.rating_scale_id > pms.rating_scale.id
+// Ref: pms.pms_cycle.approval_workflow_id > pms.approval_workflow.id
+// Ref: pms.goal_assignment.template_id > pms.goal_template.id
+// Ref: pms.goal_assignment.change_kpi_id > pms.kpi_master.id
+// Ref: pms.goal_sheet_history.kpi_id > pms.kpi_master.id
+// Ref: pms.user_notification.cycle_id > pms.pms_cycle.id
+// appraisal_line.ref_id -> kpi_master.id (line_type KRA) or competency_master.id (competency lines)
+
+TableGroup appraisal_cycle {
+  pms.pms_cycle
+  pms.pms_cycle_stage
+  pms.pms_cycle_applicability
+  pms.pms_cycle_plant
+  pms.pms_cycle_department
+  pms.pms_cycle_employment_type
+  pms.pms_cycle_eligibility_run
+  pms.pms_cycle_notification
+}
+
+TableGroup masters_and_rating_scales {
+  pms.kra_master
+  pms.kpi_master
+  pms.competency_master
+  pms.standard_rating_level
+  pms.rating_scale
+  pms.rating_scale_level
+}
+
+TableGroup goal_templates {
+  pms.goal_template
+  pms.goal_template_kra
+  pms.goal_template_kpi
+  pms.goal_template_competency
+}
+
+TableGroup goal_setting_manager_employee_hod {
+  pms.goal_assignment
+  pms.goal_assignment_target
+  pms.goal_change_request
+  pms.goal_sheet_history
+  pms.goal_transfer
+  pms.goal_transfer_kra
+}
+
+TableGroup progress_mid_year_review_and_target_revision {
+  pms.goal_progress
+  pms.mid_year_review
+  pms.target_revision
+  pms.target_revision_row
+}
+
+TableGroup appraisal_calibration_and_workflow {
+  pms.appraisal
+  pms.appraisal_line
+  pms.calibration_distribution
+  pms.approval_workflow
+}
+
+TableGroup notifications {
+  pms.user_notification
+}

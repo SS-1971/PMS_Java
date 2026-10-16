@@ -21,6 +21,10 @@ public interface PmsGoalTemplateRepository extends JpaRepository<PmsGoalTemplate
     Optional<PmsGoalTemplateEntity> findFirstByOrganisationIdAndRoleIdAndFinancialYearAndStatus(
             String organisationId, String roleId, String financialYear, PmsTemplateStatus status);
 
+    /** Another active template for the same role and year, which would make the role's template ambiguous. */
+    boolean existsByOrganisationIdAndRoleIdAndFinancialYearAndStatusAndIdNot(
+            String organisationId, String roleId, String financialYear, PmsTemplateStatus status, UUID id);
+
     /** Every (kept) template of an organisation for a financial year, used by the "copy template" feature. */
     List<PmsGoalTemplateEntity> findByOrganisationIdAndFinancialYearAndIsActiveTrue(
             String organisationId, String financialYear);

@@ -32,6 +32,11 @@ public class PmsCycleApplicabilityEntity extends BaseEntity<UUID> {
     @Column(name = "minimum_service_months")
     private Integer minimumServiceMonths;
 
+        /** Minimum service for the appraisal half; {@code minimum_service_months} is the goal-setting half. */
+    @Column(name = "appraisal_minimum_service_months")
+    private Integer appraisalMinimumServiceMonths;
+
+    /** The appraisal rule: service must be complete on or before this date. */
     @Column(name = "service_calculated_as_on")
     private LocalDate serviceCalculatedAsOn;
 

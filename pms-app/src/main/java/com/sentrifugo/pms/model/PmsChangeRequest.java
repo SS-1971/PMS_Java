@@ -11,6 +11,6 @@ import java.util.UUID;
 public record PmsChangeRequest(
         @JsonProperty("financial_year") @NotBlank String financialYear,
         @JsonProperty("kpi_id") @NotNull UUID kpiId,
-        @JsonProperty("proposed_target") BigDecimal proposedTarget,
-        @JsonProperty("reason") @NotBlank String reason) {
+        @JsonProperty("proposed_target") @jakarta.validation.constraints.PositiveOrZero BigDecimal proposedTarget,
+        @JsonProperty("reason") @NotBlank @jakarta.validation.constraints.Size(max = 1000) String reason) {
 }

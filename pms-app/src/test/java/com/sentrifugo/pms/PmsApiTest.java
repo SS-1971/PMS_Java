@@ -47,16 +47,32 @@ class PmsApiTest {
     private static final String ROLE = "eeeeeeee-0000-0000-0000-000000000001";
 
     private static String session(String userId, String orgId, boolean canWrite) {
+        // The action codes are IAM's seeded performance_management permission catalog (the controllers' actions).
         return """
                 {"user_id": "%s", "email": "u@example.com", "org_id": "%s", "is_super_admin": false,
                  "is_org_admin": false,
                  "permissions": {"performance_management": {"acl": "editor",
-                   "actions": {"manage_pms_cycles": %s, "manage_goal_templates": %s, "manage_pms_masters": %s, "manage_rating_scale": %s}, "action_acls": {}}}}
-                """.formatted(userId, orgId, canWrite, canWrite, canWrite, canWrite);
+                   "actions": {"pms_cycle": %s, "goal_template": %s, "kra_master": %s, "kpi_master": %s,
+                               "competency_master": %s, "rating_scale": %s}, "action_acls": {}}}}
+                """.formatted(userId, orgId, canWrite, canWrite, canWrite, canWrite, canWrite, canWrite);
+    }
+
+    /** A session holding only the given performance_management actions (a manager, an employee, an HOD). */
+    private static String sessionWith(String userId, String action) {
+        return """
+                {"user_id": "%s", "email": "u@example.com", "org_id": "%s", "is_super_admin": false,
+                 "is_org_admin": false,
+                 "permissions": {"performance_management": {"acl": "editor",
+                   "actions": {"%s": true}, "action_acls": {}}}}
+                """.formatted(userId, ORG_A, action);
     }
 
     @MockitoBean
     StringRedisTemplate redis;
+
+    /** IAM: who holds a grant, for the publish notifications. */
+    @MockitoBean
+    com.sentrifugo.integration.IamEmployeeClient iam;
 
     @Value("${local.server.port}")
     int port;
@@ -70,6 +86,9 @@ class PmsApiTest {
         when(redis.opsForValue()).thenReturn(sessions);
         when(sessions.get("session:writer-a")).thenReturn(session("aaaaaaaa-0000-0000-0000-000000000001", ORG_A, true));
         when(sessions.get("session:reader-a")).thenReturn(session("aaaaaaaa-0000-0000-0000-000000000002", ORG_A, false));
+        when(sessions.get("session:mgr-a")).thenReturn(sessionWith("aaaaaaaa-0000-0000-0000-000000000011", "team_goals"));
+        when(sessions.get("session:emp-a")).thenReturn(sessionWith("aaaaaaaa-0000-0000-0000-000000000012", "my_goals"));
+        when(sessions.get("session:hod-a")).thenReturn(sessionWith("aaaaaaaa-0000-0000-0000-000000000013", "goal_approval"));
         when(sessions.get("session:writer-b")).thenReturn(session("bbbbbbbb-0000-0000-0000-000000000001", ORG_B, true));
         when(sessions.get("session:mongo-org")).thenReturn(session("u1", "665f1c2e9b1e8a00aaaaaaaa", true));
     }
@@ -339,8 +358,8 @@ class PmsApiTest {
     // ── 1.1-1.6 cycle ────────────────────────────────────────────────────────
 
     private static final String[] STAGES = {"goal_setting", "employee_acknowledgement", "hod_approval",
-            "progress_tracking", "mid_year_review", "self_appraisal", "manager_appraisal", "hod_review",
-            "calibration_final_approval"};
+            "self_appraisal", "manager_appraisal", "hod_review", "hr_competency_rating",
+            "calibration_final_approval", "approval_publish"};
 
     private String stagesJson(boolean complete) {
         StringBuilder sb = new StringBuilder("[");
@@ -363,14 +382,123 @@ class PmsApiTest {
         return """
                 {"basic": {"name": "%s", "description": "d", "type": "%s", "period_start": "%s", "period_end": "%s"},
                  %s
-                 "applicability": {%s "all_departments": true, "employment_types": ["permanent"],
-                                   "min_service_months": 12, "service_as_on": "2026-04-01",
-                                   "exclude_probation": true, "exclude_notice_period": true},
+                 "applicability": {%s "all_departments": true,
+                                   "goal_setting": {"employment_types": ["permanent", "probationary", "trainee"],
+                                                    "min_service_months": 0},
+                                   "appraisal": {"employment_types": ["permanent"], "min_service_months": 12,
+                                                 "service_as_on": "2026-04-01"},
+                                   "exclude_notice_period": true},
                  "finalize": {"rating_scale_id": %s, "notify_managers": true, "notify_employees": true,
                               "notify_hod": false, "notify_hr": true},
                  "current_step": 3}
                 """.formatted(name, type, start, end, stages == null ? "" : "\"stages\": " + stages + ",",
                 plantJson, scaleId == null ? "null" : "\"" + scaleId + "\"");
+    }
+
+    @Test
+    void approvalWorkflowMasterAndTheCycleFinalizeStepKeepTheFiveAudiencesAndTheWorkflow() throws Exception {
+        // a Standard workflow exists the first time the master is listed
+        JsonNode first = ok(call("GET", "/pms-approval-workflow/get/workflows", "writer-a", null), 200);
+        assertThat(first.size()).isGreaterThanOrEqualTo(1);
+        assertThat(first.get(0).get("steps").size()).isGreaterThan(1);
+
+        String name = "Workflow " + unique();
+        JsonNode created = ok(call("POST", "/pms-approval-workflow/create/workflow", "writer-a",
+                "{\"name\": \"" + name + "\", \"steps\": [\"Section Head\", \"GP\"]}"), 201);
+        String id = created.get("id").asString();
+        assertThat(code(call("POST", "/pms-approval-workflow/create/workflow", "writer-a",
+                "{\"name\": \"" + name.toUpperCase() + "\", \"steps\": [\"GP\"]}"), 409))
+                .isEqualTo("PMS_WORKFLOW_EXISTS");
+        assertThat(code(call("POST", "/pms-approval-workflow/create/workflow", "writer-a",
+                "{\"name\": \"No steps\", \"steps\": []}"), 422)).isNotBlank();
+        ok(call("PUT", "/pms-approval-workflow/update/workflow/" + id, "writer-a",
+                "{\"name\": \"" + name + "\", \"steps\": [\"Section Head\", \"HOD\", \"GP\"]}"), 200);
+
+        // the cycle keeps the workflow and the GP switch
+        String scale = createScale("writer-a", "Wf scale " + unique());
+        String body = cycleBody("FY 2026-27 " + unique(), "annual", "2026-04-01", "2027-03-31", stagesJson(false),
+                scale, "\"all_plants\": true,")
+                .replace("\"notify_hr\": true}", "\"notify_hr\": true, \"notify_gp\": true, "
+                        + "\"approval_workflow_id\": \"" + id + "\"}");
+        JsonNode cycle = ok(call("POST", "/pms-cycle/create/cycle", "writer-a", body), 201);
+        assertThat(cycle.get("finalize").get("notify_gp").asBoolean()).isTrue();
+        assertThat(cycle.get("finalize").get("approval_workflow_id").asString()).isEqualTo(id);
+        assertThat(cycle.get("stages").size()).isEqualTo(9);
+        assertThat(code(call("DELETE", "/pms-approval-workflow/delete/workflow/" + id, "writer-a", null), 409))
+                .isEqualTo("PMS_WORKFLOW_IN_USE");
+    }
+
+    @Test
+    void publishingNotifiesEveryTickedAudienceInTheBell() throws Exception {
+        String employee = "aaaaaaaa-0000-0000-0000-000000000012";
+        String manager = "aaaaaaaa-0000-0000-0000-000000000011";
+        org.mockito.Mockito.when(iam.usersWithPermission(org.mockito.ArgumentMatchers.eq(ORG_A),
+                org.mockito.ArgumentMatchers.eq("performance_management"),
+                org.mockito.ArgumentMatchers.eq("my_goals")))
+                .thenReturn(java.util.List.of(new com.sentrifugo.integration.model.IamUserRef(employee, "e@x.com",
+                        "Emp")));
+        org.mockito.Mockito.when(iam.usersWithPermission(org.mockito.ArgumentMatchers.eq(ORG_A),
+                org.mockito.ArgumentMatchers.eq("performance_management"),
+                org.mockito.ArgumentMatchers.eq("team_goals")))
+                .thenReturn(java.util.List.of(new com.sentrifugo.integration.model.IamUserRef(manager, "m@x.com",
+                        "Mgr")));
+
+        String scale = createScale("writer-a", "Bell scale " + unique());
+        String id = ok(call("POST", "/pms-cycle/create/cycle", "writer-a", cycleBody("FY 2026-27 " + unique(),
+                "annual", "2026-04-01", "2027-03-31", stagesJson(true), scale, "\"all_plants\": true,")), 201)
+                .get("id").asString();
+        // employees and managers are ticked in cycleBody; HOD is not
+        JsonNode activation = ok(call("POST", "/pms-cycle/publish/cycle/" + id, "writer-a", null), 200);
+        assertThat(activation.get("notifications").size()).isGreaterThanOrEqualTo(3);
+
+        JsonNode bell = ok(call("GET", "/pms-notification/get/my", "emp-a", null), 200);
+        assertThat(bell.get("unread").asInt()).isEqualTo(1);
+        assertThat(bell.get("items").get(0).get("title").asString()).contains("is live");
+        assertThat(bell.get("items").get(0).get("message").asString()).contains("Goal setting is open from");
+        assertThat(bell.get("items").get(0).get("link_path").asString()).isEqualTo("/pms/my-goals/2026");
+
+        // the manager gets theirs; an HOD who was not ticked gets nothing
+        assertThat(ok(call("GET", "/pms-notification/get/my", "mgr-a", null), 200).get("unread").asInt())
+                .isEqualTo(1);
+        assertThat(ok(call("GET", "/pms-notification/get/my", "hod-a", null), 200).get("unread").asInt()).isZero();
+
+        // reading clears the unread count
+        JsonNode after = ok(call("POST", "/pms-notification/read", "emp-a", "{}"), 200);
+        assertThat(after.get("unread").asInt()).isZero();
+        assertThat(after.get("items").get(0).get("read").asBoolean()).isTrue();
+    }
+
+    @Test
+    void stageNoticesGiveEachRoleItsOwnWindowFromTheCycleTimeline() throws Exception {
+        String scale = createScale("writer-a", "Notice scale " + unique());
+        String id = ok(call("POST", "/pms-cycle/create/cycle", "writer-a", cycleBody("FY 2026-27 " + unique(),
+                "annual", "2026-04-01", "2027-03-31", stagesJson(true), scale, "\"all_plants\": true,")), 201)
+                .get("id").asString();
+        ok(call("POST", "/pms-cycle/publish/cycle/" + id, "writer-a", null), 200);
+        String path = "/pms-goal-assignment/get/stage-notices?financial_year=2026-27";
+
+        // a manager gets the goal-setting window, with its end date and the bell switched on
+        JsonNode manager = ok(call("GET", path, "mgr-a", null), 200);
+        assertThat(manager.size()).isEqualTo(1);
+        assertThat(manager.get(0).get("stage").asString()).isEqualTo("goal_setting");
+        assertThat(manager.get(0).get("audience").asString()).isEqualTo("manager");
+        assertThat(manager.get(0).get("end_date").asString()).isEqualTo("2027-03-31");
+        assertThat(manager.get(0).get("notify").asBoolean()).isTrue();
+        assertThat(manager.get(0).get("state").asString()).isIn("upcoming", "open");
+
+        // the employee gets acknowledgement; the HOD gets approval, which the cycle does not notify
+        JsonNode employee = ok(call("GET", path, "emp-a", null), 200);
+        assertThat(employee.size()).isEqualTo(1);
+        assertThat(employee.get(0).get("stage").asString()).isEqualTo("employee_acknowledgement");
+        JsonNode hod = ok(call("GET", path, "hod-a", null), 200);
+        assertThat(hod.size()).isEqualTo(1);
+        assertThat(hod.get(0).get("stage").asString()).isEqualTo("hod_approval");
+        assertThat(hod.get(0).get("notify").asBoolean()).isFalse();
+
+        // someone with none of those permissions gets nothing; another year has no cycle
+        assertThat(ok(call("GET", path, "reader-a", null), 200).size()).isZero();
+        assertThat(ok(call("GET", "/pms-goal-assignment/get/stage-notices?financial_year=2031-32", "mgr-a", null),
+                200).size()).isZero();
     }
 
     @Test
@@ -388,7 +516,10 @@ class PmsApiTest {
         assertThat(created.get("stages").size()).isEqualTo(9);
         assertThat(created.get("stages").get(0).get("stage").asString()).isEqualTo("goal_setting");
         assertThat(created.get("applicability").get("plant_ids").get(0).asString()).isEqualTo(PLANT_1);
-        assertThat(created.get("applicability").get("employment_types").get(0).asString()).isEqualTo("permanent");
+        assertThat(created.get("applicability").get("goal_setting").get("employment_types").size()).isEqualTo(3);
+        assertThat(created.get("applicability").get("appraisal").get("employment_types").get(0).asString())
+                .isEqualTo("permanent");
+        assertThat(created.get("applicability").get("appraisal").get("min_service_months").asInt()).isEqualTo(12);
         assertThat(created.get("finalize").get("notify_hod").asBoolean()).isFalse();
         assertThat(created.get("created_on").isNull()).isFalse();
 
@@ -409,21 +540,24 @@ class PmsApiTest {
                 {"basic": {"name": "%s renamed", "type": "mid_year", "period_start": "2026-04-01", "period_end": "2026-09-30"},
                  "stages": %s,
                  "applicability": {"all_plants": true, "all_departments": false,
-                   "department_ids": ["%s"], "employment_types": ["permanent", "contract"],
-                   "min_service_months": 6, "service_as_on": "2026-04-01"}}
+                   "department_ids": ["%s"],
+                   "goal_setting": {"employment_types": ["permanent", "contract"], "min_service_months": 0},
+                   "appraisal": {"employment_types": ["permanent", "contract"], "min_service_months": 6,
+                                 "service_as_on": "2026-04-01"}}}
                 """.formatted(name, stagesJson(true), DEPT)), 200);
         assertThat(updated.get("basic").get("type").asString()).isEqualTo("mid_year");
         assertThat(updated.get("applicable_to").asString()).isEqualTo("All Plants");
         assertThat(updated.get("applicability").get("department_ids").get(0).asString()).isEqualTo(DEPT);
         assertThat(updated.get("applicability").get("plant_ids").size()).isZero();
-        assertThat(updated.get("applicability").get("employment_types").size()).isEqualTo(2);
+        assertThat(updated.get("applicability").get("goal_setting").get("employment_types").size()).isEqualTo(2);
+        assertThat(updated.get("applicability").get("appraisal").get("employment_types").size()).isEqualTo(2);
         assertThat(updated.get("finalize").get("rating_scale_id").asString()).isEqualTo(scale); // untouched
         assertThat(updated.get("cycle_code").asString()).startsWith("PMS-2627-A");
 
         JsonNode activation = ok(call("POST", "/pms-cycle/publish/cycle/" + id, "writer-a", null), 200);
         assertThat(activation.get("cycle").get("status").asString()).isEqualTo("active");
         assertThat(activation.get("published_on").isNull()).isFalse();
-        assertThat(activation.get("notifications").size()).isZero(); // no notification integration yet
+        assertThat(activation.get("notifications").size()).isEqualTo(3); // one record per ticked audience
         assertThat(activation.get("eligibility").isNull()).isTrue();
         assertThat(call("POST", "/pms-cycle/publish/cycle/" + id, "writer-a", null).statusCode()).isEqualTo(409);
         ok(call("GET", "/pms-cycle/get/cycle/" + id + "/activation", "writer-a", null), 200);

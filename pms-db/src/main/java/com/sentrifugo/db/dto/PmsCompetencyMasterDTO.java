@@ -24,5 +24,7 @@ public class PmsCompetencyMasterDTO extends BaseDTO {
 
     private String category;
 
+    private com.sentrifugo.db.enums.PmsCompetencyType competencyType;
+
     private PmsMasterStatus status;
 }

@@ -11,8 +11,10 @@ import com.sentrifugo.db.entity.PmsCycleEntity;
 import com.sentrifugo.db.entity.PmsCyclePlantEntity;
 import com.sentrifugo.db.entity.PmsCycleStageEntity;
 import com.sentrifugo.db.enums.PmsCycleStageType;
+import com.sentrifugo.db.enums.PmsNotificationAudience;
 import com.sentrifugo.db.enums.PmsCycleStatus;
 import com.sentrifugo.db.enums.PmsCycleType;
+import com.sentrifugo.db.enums.PmsEmploymentScope;
 import com.sentrifugo.db.enums.PmsEmploymentType;
 import com.sentrifugo.db.enums.PmsMasterStatus;
 import com.sentrifugo.db.mapper.PmsCycleApplicabilityMapper;
@@ -76,6 +78,8 @@ public class PmsCycleService {
     private final PmsCycleDepartmentRepository departmentRepository;
     private final PmsCycleEmploymentTypeRepository employmentTypeRepository;
     private final PmsCycleNotificationRepository notificationRepository;
+    private final PmsApprovalWorkflowService workflowService;
+    private final PmsNotificationService notificationService;
     private final PmsCycleEligibilityRunRepository eligibilityRunRepository;
     private final PmsRatingScaleRepository ratingScaleRepository;
     private final PmsCycleMapper cycleMapper;
@@ -145,6 +149,7 @@ public class PmsCycleService {
         validateStages(request.stages());
         PmsCycleRequest.Finalize settings = request.finalizeSettings();
         assertRatingScaleUsable(organisationId, settings == null ? null : settings.ratingScaleId());
+        workflowService.requireUsable(organisationId, settings == null ? null : settings.approvalWorkflowId());
 
         // Defaults are filled in here because the entity columns are NOT NULL and a null in the DTO would be
         // copied straight onto the entity.
@@ -159,6 +164,8 @@ public class PmsCycleService {
                 .notifyEmployees(flag(settings == null ? null : settings.notifyEmployees()))
                 .notifyHod(flag(settings == null ? null : settings.notifyHod()))
                 .notifyHr(flag(settings == null ? null : settings.notifyHr()))
+                .notifyGp(flag(settings == null ? null : settings.notifyGp()))
+                .approvalWorkflowId(settings == null ? null : settings.approvalWorkflowId())
                 .currentStep(request.currentStep() == null ? 1 : request.currentStep())
                 .completedStep(request.completedStep() == null ? 0 : request.completedStep())
                 .build();
@@ -186,6 +193,7 @@ public class PmsCycleService {
         validateStages(request.stages());
         PmsCycleRequest.Finalize settings = request.finalizeSettings();
         assertRatingScaleUsable(organisationId, settings == null ? null : settings.ratingScaleId());
+        workflowService.requireUsable(organisationId, settings == null ? null : settings.approvalWorkflowId());
 
         // Only the editable fields are set; the mapper ignores nulls, so id, organisation, cycle code, status and
         // audit columns can never be touched through this path.
@@ -200,13 +208,25 @@ public class PmsCycleService {
                 .notifyEmployees(settings == null ? null : settings.notifyEmployees())
                 .notifyHod(settings == null ? null : settings.notifyHod())
                 .notifyHr(settings == null ? null : settings.notifyHr())
+                .notifyGp(settings == null ? null : settings.notifyGp())
+                .approvalWorkflowId(settings == null ? null : settings.approvalWorkflowId())
                 .currentStep(request.currentStep())
                 .completedStep(request.completedStep())
                 .build();
+        // On a live cycle, an audience ticked now that was not ticked before is notified (once).
+        Set<PmsNotificationAudience> before = ticked(cycle);
+        boolean live = cycle.getStatus() == PmsCycleStatus.ACTIVE;
         cycleMapper.updateEntityFromDto(dto, cycle);
         cycle = cycleRepository.save(cycle);
 
         saveChildren(cycle, request);
+        if (live) {
+            Set<PmsNotificationAudience> added = ticked(cycle);
+            added.removeAll(before);
+            if (!added.isEmpty()) {
+                notificationService.notifyCycleLive(cycle, added);
+            }
+        }
         return toResponse(cycle);
     }
 
@@ -226,7 +246,10 @@ public class PmsCycleService {
         cycle.setCurrentStep(4);
         cycle.setCompletedStep(4);
         PmsCycleEntity saved = cycleRepository.save(cycle);
-        log.warn("PMS cycle {} published; the eligibility run and notifications are not implemented yet", cycleId);
+        // Every audience ticked on screen 1.5 gets a bell notification.
+        notificationService.notifyCycleLive(saved, ticked(saved));
+        log.info("PMS cycle {} published and its audiences notified; the eligibility run is not implemented yet",
+                cycleId);
         return toActivation(saved);
     }
 
@@ -271,17 +294,21 @@ public class PmsCycleService {
         boolean allDepartments = a.allDepartments() == null || a.allDepartments();
         Set<String> plantIds = allPlants ? Set.of() : distinct(a.plantIds());
         Set<String> departmentIds = allDepartments ? Set.of() : distinct(a.departmentIds());
-        Set<PmsEmploymentType> employmentTypes = new java.util.LinkedHashSet<>();
-        if (a.employmentTypes() != null) {
-            a.employmentTypes().forEach(t -> employmentTypes.add(parseEmploymentType(t)));
-        }
+        PmsCycleRequest.GoalSetting goalSetting = a.goalSetting();
+        PmsCycleRequest.Appraisal appraisal = a.appraisal();
+        Set<PmsEmploymentType> goalTypes =
+                parseEmploymentTypes(goalSetting == null ? null : goalSetting.employmentTypes());
+        Set<PmsEmploymentType> appraisalTypes =
+                parseEmploymentTypes(appraisal == null ? null : appraisal.employmentTypes());
 
         PmsCycleApplicabilityDTO dto = PmsCycleApplicabilityDTO.builder()
                 .allPlants(allPlants)
                 .allDepartments(allDepartments)
-                .minimumServiceMonths(a.minServiceMonths())
-                .serviceCalculatedAsOn(a.serviceAsOn())
-                .excludeProbation(flag(a.excludeProbation()))
+                .minimumServiceMonths(goalSetting == null ? null : goalSetting.minServiceMonths())
+                .appraisalMinimumServiceMonths(appraisal == null ? null : appraisal.minServiceMonths())
+                .serviceCalculatedAsOn(appraisal == null ? null : appraisal.serviceAsOn())
+                // "Probationary" is an employment type now, so the old blanket exclusion switch is retired.
+                .excludeProbation(false)
                 .excludeNoticePeriod(flag(a.excludeNoticePeriod()))
                 .build();
         PmsCycleApplicabilityEntity row = applicabilityRepository.findByCycleId(cycle.getId()).orElse(null);
@@ -293,6 +320,7 @@ public class PmsCycleService {
             row.setAllPlants(dto.getAllPlants());
             row.setAllDepartments(dto.getAllDepartments());
             row.setMinimumServiceMonths(dto.getMinimumServiceMonths());
+            row.setAppraisalMinimumServiceMonths(dto.getAppraisalMinimumServiceMonths());
             row.setServiceCalculatedAsOn(dto.getServiceCalculatedAsOn());
             row.setExcludeProbation(dto.getExcludeProbation());
             row.setExcludeNoticePeriod(dto.getExcludeNoticePeriod());
@@ -307,8 +335,18 @@ public class PmsCycleService {
                 PmsCyclePlantEntity.builder().cycle(cycle).plantId(id).build()));
         departmentIds.forEach(id -> departmentRepository.save(
                 PmsCycleDepartmentEntity.builder().cycle(cycle).departmentId(id).build()));
-        employmentTypes.forEach(t -> employmentTypeRepository.save(
-                PmsCycleEmploymentTypeEntity.builder().cycle(cycle).employmentType(t).build()));
+        goalTypes.forEach(t -> employmentTypeRepository.save(PmsCycleEmploymentTypeEntity.builder()
+                .cycle(cycle).scope(PmsEmploymentScope.GOAL_SETTING).employmentType(t).build()));
+        appraisalTypes.forEach(t -> employmentTypeRepository.save(PmsCycleEmploymentTypeEntity.builder()
+                .cycle(cycle).scope(PmsEmploymentScope.APPRAISAL).employmentType(t).build()));
+    }
+
+    private static Set<PmsEmploymentType> parseEmploymentTypes(List<String> values) {
+        Set<PmsEmploymentType> out = new java.util.LinkedHashSet<>();
+        if (values != null) {
+            values.forEach(t -> out.add(parseEmploymentType(t)));
+        }
+        return out;
     }
 
     // ── Validation ───────────────────────────────────────────────────────────
@@ -319,6 +357,18 @@ public class PmsCycleService {
         }
         return parseType(basic.type());
     }
+
+    /** The timeline of screen 1.3: every one of these needs dates before a cycle can be published. */
+    private static final List<PmsCycleStageType> REQUIRED_STAGES = List.of(
+            PmsCycleStageType.GOAL_SETTING,
+            PmsCycleStageType.EMPLOYEE_ACKNOWLEDGEMENT,
+            PmsCycleStageType.HOD_APPROVAL,
+            PmsCycleStageType.SELF_APPRAISAL,
+            PmsCycleStageType.MANAGER_APPRAISAL,
+            PmsCycleStageType.HOD_REVIEW,
+            PmsCycleStageType.HR_COMPETENCY_RATING,
+            PmsCycleStageType.CALIBRATION_FINAL_APPROVAL,
+            PmsCycleStageType.APPROVAL_PUBLISH);
 
     private void validateStages(List<PmsCycleRequest.Stage> stages) {
         if (stages == null) {
@@ -379,21 +429,28 @@ public class PmsCycleService {
                 problems.add("at least one department must be selected when not applying to all departments");
             }
             if (applicability.getMinimumServiceMonths() == null) {
-                problems.add("minimum service (months) is required");
+                problems.add("goal setting: minimum service (months) is required");
+            }
+            if (applicability.getAppraisalMinimumServiceMonths() == null) {
+                problems.add("appraisal: minimum service (months) is required");
             }
             if (applicability.getServiceCalculatedAsOn() == null) {
-                problems.add("the service-calculated-as-on date is required");
+                problems.add("appraisal: the service-completed-on-or-before date is required");
             }
         }
-        if (employmentTypeRepository.findByCycleId(id).isEmpty()) {
-            problems.add("at least one employment type must be selected");
+        List<PmsCycleEmploymentTypeEntity> types = employmentTypeRepository.findByCycleId(id);
+        if (types.stream().noneMatch(t -> t.getScope() == PmsEmploymentScope.GOAL_SETTING)) {
+            problems.add("goal setting: at least one employment type must be selected");
+        }
+        if (types.stream().noneMatch(t -> t.getScope() == PmsEmploymentScope.APPRAISAL)) {
+            problems.add("appraisal: at least one employment type must be selected");
         }
 
         Set<PmsCycleStageType> complete = EnumSet.noneOf(PmsCycleStageType.class);
         stageRepository.findByCycleId(id).stream()
                 .filter(s -> s.getStartDate() != null && s.getEndDate() != null)
                 .forEach(s -> complete.add(s.getStage()));
-        for (PmsCycleStageType stage : PmsCycleStageType.values()) {
+        for (PmsCycleStageType stage : REQUIRED_STAGES) {
             if (!complete.contains(stage)) {
                 problems.add("stage " + wire(stage) + " needs both a start and end date");
             }
@@ -465,7 +522,8 @@ public class PmsCycleService {
         try {
             return PmsEmploymentType.valueOf(value.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw DomainException.unprocessable("employment type must be one of: permanent, contract, trainee",
+            throw DomainException.unprocessable(
+                    "employment type must be one of: permanent, contract, probationary, trainee",
                     "VALIDATION_ERROR");
         }
     }
@@ -476,6 +534,12 @@ public class PmsCycleService {
         return new PmsCycleListResponse.Item(cycle.getId(), cycle.getCycleCode(), cycle.getName(),
                 wire(cycle.getType()), cycle.getPeriodStart(), cycle.getPeriodEnd(), allPlants ? "All Plants" : null,
                 wire(cycle.getStatus()), toDate(cycle.getCreatedDate()));
+    }
+
+    private List<String> employmentTypes(UUID cycleId, PmsEmploymentScope scope) {
+        return employmentTypeRepository.findByCycleId(cycleId).stream()
+                .filter(e -> e.getScope() == scope)
+                .map(e -> wire(e.getEmploymentType())).sorted().toList();
     }
 
     private PmsCycleResponse toResponse(PmsCycleEntity cycle) {
@@ -495,10 +559,12 @@ public class PmsCycleService {
                         Boolean.TRUE.equals(a.getAllDepartments()),
                         departmentRepository.findByCycleId(id).stream()
                                 .map(PmsCycleDepartmentEntity::getDepartmentId).toList(),
-                        employmentTypeRepository.findByCycleId(id).stream()
-                                .map(e -> wire(e.getEmploymentType())).sorted().toList(),
-                        a.getMinimumServiceMonths(), a.getServiceCalculatedAsOn(),
-                        Boolean.TRUE.equals(a.getExcludeProbation()),
+                        new PmsCycleResponse.GoalSetting(
+                                employmentTypes(id, PmsEmploymentScope.GOAL_SETTING),
+                                a.getMinimumServiceMonths()),
+                        new PmsCycleResponse.Appraisal(
+                                employmentTypes(id, PmsEmploymentScope.APPRAISAL),
+                                a.getAppraisalMinimumServiceMonths(), a.getServiceCalculatedAsOn()),
                         Boolean.TRUE.equals(a.getExcludeNoticePeriod())))
                 .orElse(null);
 
@@ -509,7 +575,8 @@ public class PmsCycleService {
                         dto.getPeriodStart(), dto.getPeriodEnd()),
                 stages, applicability,
                 new PmsCycleResponse.Finalize(dto.getRatingScaleId(), dto.getNotifyManagers(),
-                        dto.getNotifyEmployees(), dto.getNotifyHod(), dto.getNotifyHr()),
+                        dto.getNotifyEmployees(), dto.getNotifyHod(), dto.getNotifyHr(), dto.getNotifyGp(),
+                        dto.getApprovalWorkflowId()),
                 dto.getCurrentStep(), dto.getCompletedStep());
     }
 
@@ -527,6 +594,27 @@ public class PmsCycleService {
                         .orElse(null);
         return new PmsCycleActivationResponse(toResponse(cycle), toDate(cycle.getPublishedOn()), notifications,
                 eligibility);
+    }
+
+    /** The audiences switched on for the cycle on screen 1.5. */
+    private static Set<PmsNotificationAudience> ticked(PmsCycleEntity cycle) {
+        Set<PmsNotificationAudience> out = EnumSet.noneOf(PmsNotificationAudience.class);
+        if (Boolean.TRUE.equals(cycle.getNotifyEmployees())) {
+            out.add(PmsNotificationAudience.EMPLOYEES);
+        }
+        if (Boolean.TRUE.equals(cycle.getNotifyManagers())) {
+            out.add(PmsNotificationAudience.REPORTING_MANAGERS);
+        }
+        if (Boolean.TRUE.equals(cycle.getNotifyHod())) {
+            out.add(PmsNotificationAudience.HOD_REVIEWERS);
+        }
+        if (Boolean.TRUE.equals(cycle.getNotifyHr())) {
+            out.add(PmsNotificationAudience.HR);
+        }
+        if (Boolean.TRUE.equals(cycle.getNotifyGp())) {
+            out.add(PmsNotificationAudience.GP);
+        }
+        return out;
     }
 
     private static <T> Set<T> distinct(List<T> ids) {

@@ -19,6 +19,8 @@ public record PmsTargetsRequest(
     public record Target(
             @JsonProperty("kpi_id") @NotNull UUID kpiId,
             @JsonProperty("weight") @NotNull BigDecimal weight,
-            @JsonProperty("target") BigDecimal target) {
+            @JsonProperty("target") BigDecimal target,
+            /** Why the target changed. Used when a returned sheet is revised and resent (screen 3.7). */
+            @JsonProperty("remarks") @Size(max = 500) String remarks) {
     }
 }

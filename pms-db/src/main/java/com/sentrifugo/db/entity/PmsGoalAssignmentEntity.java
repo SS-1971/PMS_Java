@@ -66,8 +66,19 @@ public class PmsGoalAssignmentEntity extends BaseEntity<UUID> {
     @Column(name = "designation_name", length = 200)
     private String designationName;
 
+    /** The setting manager's name and the employee's department id, for the HR screens. */
+    @Column(name = "manager_name", length = 200)
+    private String managerName;
+
+    @Column(name = "department_id", length = 64)
+    private String departmentId;
+
     @Column(name = "acknowledged_on")
     private LocalDateTime acknowledgedOn;
+
+    /** The employee's optional comment when acknowledging the goals (screen 4.3). */
+    @Column(name = "acknowledge_comment", length = 500)
+    private String acknowledgeComment;
 
     /** Employee's change request: which KPI, why, and the target they propose. */
     @Column(name = "change_kpi_id")

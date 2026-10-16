@@ -5,6 +5,8 @@ import com.sentrifugo.integration.rpc.RpcUnavailableException;
 import com.sentrifugo.integration.rpc.ServiceRpcClient;
 import com.sentrifugo.integration.model.DirectReportsRequest;
 import com.sentrifugo.integration.model.IamEmployee;
+import com.sentrifugo.integration.model.IamUserRef;
+import com.sentrifugo.integration.model.UsersWithPermissionRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,6 +40,21 @@ public class IamEmployeeClient {
     public IamEmployeeClient(ServiceRpcClient rpc, @Value("${pms.iam-rpc.reply-timeout-ms:8000}") long timeoutMs) {
         this.rpc = rpc;
         this.timeout = Duration.ofMillis(timeoutMs);
+    }
+
+    /** Users who explicitly hold a grant, from IAM's {@code users_with_permission} RPC. */
+    public List<IamUserRef> usersWithPermission(String organisationId, String module, String permission) {
+        try {
+            List<IamUserRef> rows = rpc.call("iam", "users_with_permission",
+                    new UsersWithPermissionRequest(module, permission, organisationId), timeout,
+                    new TypeReference<List<IamUserRef>>() {
+                    });
+            return rows == null ? List.of() : rows;
+        } catch (RpcUnavailableException e) {
+            log.warn("IAM users_with_permission RPC failed: {}", e.getMessage());
+            throw new DomainException("The employee directory is unavailable. Try again shortly.",
+                    "IAM_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE);
+        }
     }
 
     /** Direct reports of {@code managerUserId}, scoped to {@code organisationId}. */
