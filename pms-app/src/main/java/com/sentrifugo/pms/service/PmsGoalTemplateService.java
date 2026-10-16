@@ -1,0 +1,551 @@
+package com.sentrifugo.pms.service;
+
+import com.sentrifugo.common.exception.DomainException;
+import com.sentrifugo.db.dto.PmsGoalTemplateCompetencyDTO;
+import com.sentrifugo.db.dto.PmsGoalTemplateDTO;
+import com.sentrifugo.db.dto.PmsGoalTemplateKpiDTO;
+import com.sentrifugo.db.dto.PmsGoalTemplateKraDTO;
+import com.sentrifugo.db.entity.PmsCompetencyMasterEntity;
+import com.sentrifugo.db.entity.PmsGoalTemplateCompetencyEntity;
+import com.sentrifugo.db.entity.PmsGoalTemplateEntity;
+import com.sentrifugo.db.entity.PmsGoalTemplateKpiEntity;
+import com.sentrifugo.db.entity.PmsGoalTemplateKraEntity;
+import com.sentrifugo.db.entity.PmsKpiMasterEntity;
+import com.sentrifugo.db.entity.PmsKraMasterEntity;
+import com.sentrifugo.db.enums.PmsMasterStatus;
+import com.sentrifugo.db.enums.PmsTargetType;
+import com.sentrifugo.db.enums.PmsTemplateStatus;
+import com.sentrifugo.db.mapper.PmsGoalTemplateCompetencyMapper;
+import com.sentrifugo.db.mapper.PmsGoalTemplateKpiMapper;
+import com.sentrifugo.db.mapper.PmsGoalTemplateKraMapper;
+import com.sentrifugo.db.mapper.PmsGoalTemplateMapper;
+import com.sentrifugo.db.repository.PmsCompetencyMasterRepository;
+import com.sentrifugo.db.repository.PmsGoalTemplateCompetencyRepository;
+import com.sentrifugo.db.repository.PmsGoalTemplateKpiRepository;
+import com.sentrifugo.db.repository.PmsGoalTemplateKraRepository;
+import com.sentrifugo.db.repository.PmsGoalTemplateRepository;
+import com.sentrifugo.db.repository.PmsKpiMasterRepository;
+import com.sentrifugo.db.repository.PmsKraMasterRepository;
+import com.sentrifugo.db.util.PmsGoalTemplateSpecifications;
+import com.sentrifugo.pms.model.PmsGoalTemplateCompetencyRequest;
+import com.sentrifugo.pms.model.PmsGoalTemplateCopyPreviewResponse;
+import com.sentrifugo.pms.model.PmsGoalTemplateCopyResultResponse;
+import com.sentrifugo.pms.model.PmsGoalTemplateKraKpiRequest;
+import com.sentrifugo.pms.model.PmsGoalTemplateListResponse;
+import com.sentrifugo.pms.model.PmsGoalTemplateRequest;
+import com.sentrifugo.pms.model.PmsGoalTemplateResponse;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * Goal templates (screens 2.1-2.4), saved the way the three-step wizard saves them: basic info, then the KRA/KPI
+ * selection, then the competencies, each as one transactional replace.
+ *
+ * <p>A template is "complete" when every selected KRA has KPIs whose weights total 100 and the competency weights
+ * total 100. An ACTIVE template must be complete: it starts as DRAFT, is promoted to ACTIVE when the final step
+ * is saved complete (unless it was marked inactive), and falls back to DRAFT if a later edit makes it incomplete.
+ * Department, role and plant ids come from the Sentrifugo system and cannot be checked here.
+ */
+@Service
+@RequiredArgsConstructor
+public class PmsGoalTemplateService {
+
+    private static final Logger log = LoggerFactory.getLogger(PmsGoalTemplateService.class);
+    private static final BigDecimal HUNDRED = new BigDecimal("100");
+    private static final BigDecimal TOLERANCE = new BigDecimal("0.01");
+    /** goal_template.template_name is varchar(200). */
+    private static final int MAX_NAME_LENGTH = 200;
+
+    private final PmsGoalTemplateRepository templateRepository;
+    private final PmsGoalTemplateKraRepository templateKraRepository;
+    private final PmsGoalTemplateKpiRepository templateKpiRepository;
+    private final PmsGoalTemplateCompetencyRepository templateCompetencyRepository;
+    private final PmsKraMasterRepository kraRepository;
+    private final PmsKpiMasterRepository kpiRepository;
+    private final PmsCompetencyMasterRepository competencyRepository;
+    private final PmsGoalTemplateMapper templateMapper;
+    private final PmsGoalTemplateKraMapper templateKraMapper;
+    private final PmsGoalTemplateKpiMapper templateKpiMapper;
+    private final PmsGoalTemplateCompetencyMapper templateCompetencyMapper;
+
+    // ── Reads ────────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<PmsGoalTemplateListResponse> getGoalTemplates(String organisationId, String financialYear,
+                                                              String departmentId, String plantId, String search) {
+        var spec = PmsGoalTemplateSpecifications.matching(organisationId, financialYear, departmentId, plantId,
+                search);
+        return templateRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdDate")).stream()
+                .map(t -> new PmsGoalTemplateListResponse(t.getId(), t.getTemplateName(), t.getFinancialYear(),
+                        t.getDepartmentId(), t.getRoleId(), t.getPlantId(), t.getEffectiveFrom(), wire(t.getStatus())))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PmsGoalTemplateResponse getGoalTemplate(String organisationId, UUID templateId) {
+        return toResponse(find(organisationId, templateId));
+    }
+
+    // ── Writes ───────────────────────────────────────────────────────────────
+
+    /** Deletes a draft template with its KRA, KPI and competency rows. Active or inactive templates are kept. */
+    @Transactional
+    public void deleteDraftTemplate(String organisationId, UUID templateId) {
+        PmsGoalTemplateEntity template = find(organisationId, templateId);
+        if (template.getStatus() != PmsTemplateStatus.DRAFT) {
+            throw DomainException.unprocessable("Only draft templates can be deleted.", "PMS_TEMPLATE_NOT_DRAFT");
+        }
+        log.info("Deleting draft goal template {}", templateId);
+        templateKpiRepository.deleteByTemplateId(templateId);
+        templateKraRepository.deleteByTemplateId(templateId);
+        templateCompetencyRepository.deleteByTemplateId(templateId);
+        templateRepository.delete(template);
+    }
+
+    /** Screen 2.2 "Save and Next". */
+    @Transactional
+    public PmsGoalTemplateResponse createGoalTemplate(String organisationId, PmsGoalTemplateRequest request) {
+        log.info("Creating goal template for organisation {}", organisationId);
+        PmsTemplateStatus status = initialStatus(request.status());
+        PmsGoalTemplateEntity template = templateMapper.toEntity(PmsGoalTemplateDTO.builder()
+                .organisationId(organisationId)
+                .financialYear(request.financialYear().trim())
+                .templateName(request.templateName().trim())
+                .description(request.description())
+                .departmentId(request.departmentId())
+                .roleId(request.roleId())
+                .plantId(request.plantId())
+                .effectiveFrom(request.effectiveFrom())
+                .status(status)
+                .build());
+        return toResponse(templateRepository.save(template));
+    }
+
+    @Transactional
+    public PmsGoalTemplateResponse updateGoalTemplate(String organisationId, UUID templateId,
+                                                      PmsGoalTemplateRequest request) {
+        log.info("Updating goal template {}", templateId);
+        PmsGoalTemplateEntity template = find(organisationId, templateId);
+        template.setFinancialYear(request.financialYear().trim());
+        template.setTemplateName(request.templateName().trim());
+        template.setDescription(request.description());
+        template.setDepartmentId(request.departmentId());
+        template.setRoleId(request.roleId());
+        template.setPlantId(request.plantId());
+        template.setEffectiveFrom(request.effectiveFrom());
+        PmsTemplateStatus requested = initialStatus(request.status());
+        // Marking a template active only sticks while it is complete (see the class comment).
+        template.setStatus(requested == PmsTemplateStatus.DRAFT && request.status() != null
+                && request.status().equalsIgnoreCase("active") && isComplete(templateId)
+                ? PmsTemplateStatus.ACTIVE : requested);
+        return toResponse(templateRepository.save(template));
+    }
+
+    /** Screen 2.3 "Save as Draft" / "Save and Next": replaces the template's KRA and KPI selection. */
+    @Transactional
+    public PmsGoalTemplateResponse saveKraKpi(String organisationId, UUID templateId,
+                                              PmsGoalTemplateKraKpiRequest request) {
+        log.info("Saving KRA/KPI configuration of goal template {}", templateId);
+        PmsGoalTemplateEntity template = find(organisationId, templateId);
+        boolean draft = Boolean.TRUE.equals(request.saveAsDraft());
+
+        Map<UUID, PmsKraMasterEntity> kras = new LinkedHashMap<>();
+        Map<UUID, PmsKpiMasterEntity> kpis = new LinkedHashMap<>();
+        BigDecimal total = BigDecimal.ZERO;
+        Set<UUID> seenKras = new HashSet<>();
+        Set<UUID> seenKpis = new HashSet<>();
+
+        if (!draft && request.kras().isEmpty()) {
+            throw DomainException.unprocessable("Select at least one KRA.", "PMS_TEMPLATE_INCOMPLETE");
+        }
+        for (PmsGoalTemplateKraKpiRequest.Kra kraRequest : request.kras()) {
+            if (!seenKras.add(kraRequest.kraId())) {
+                throw DomainException.unprocessable("Each KRA may only be added once.", "VALIDATION_ERROR");
+            }
+            PmsKraMasterEntity kra = kraRepository.findByIdAndOrganisationId(kraRequest.kraId(), organisationId)
+                    .filter(k -> Boolean.TRUE.equals(k.getIsActive()) && k.getStatus() == PmsMasterStatus.ACTIVE)
+                    .orElseThrow(() -> DomainException.unprocessable(
+                            "kra_id " + kraRequest.kraId() + " does not refer to an active KRA", "PMS_KRA_NOT_FOUND"));
+            kras.put(kra.getId(), kra);
+            if (!draft && kraRequest.kpis().isEmpty()) {
+                throw DomainException.unprocessable("Every selected KRA needs at least one KPI.",
+                        "PMS_TEMPLATE_INCOMPLETE");
+            }
+            for (PmsGoalTemplateKraKpiRequest.Kpi kpiRequest : kraRequest.kpis()) {
+                if (!seenKpis.add(kpiRequest.kpiId())) {
+                    throw DomainException.unprocessable("Each KPI may only be added once.", "VALIDATION_ERROR");
+                }
+                PmsKpiMasterEntity kpi = kpiRepository.findByIdAndOrganisationId(kpiRequest.kpiId(), organisationId)
+                        .filter(k -> Boolean.TRUE.equals(k.getIsActive()) && k.getStatus() == PmsMasterStatus.ACTIVE)
+                        .orElseThrow(() -> DomainException.unprocessable(
+                                "kpi_id " + kpiRequest.kpiId() + " does not refer to an active KPI",
+                                "PMS_KPI_NOT_FOUND"));
+                if (!kpi.getKra().getId().equals(kra.getId())) {
+                    throw DomainException.unprocessable("KPI '" + kpi.getName() + "' does not belong to KRA '"
+                            + kra.getName() + "'.", "VALIDATION_ERROR");
+                }
+                kpis.put(kpi.getId(), kpi);
+                total = total.add(kpiRequest.weightage());
+            }
+        }
+        if (total.compareTo(HUNDRED.add(TOLERANCE)) > 0) {
+            throw DomainException.unprocessable("KPI weightage cannot exceed 100 (got " + total + ").",
+                    "PMS_TEMPLATE_INCOMPLETE");
+        }
+        if (!draft && total.subtract(HUNDRED).abs().compareTo(TOLERANCE) > 0) {
+            throw DomainException.unprocessable("KPI weightage must total 100 (got " + total + ").",
+                    "PMS_TEMPLATE_INCOMPLETE");
+        }
+
+        templateKpiRepository.deleteByTemplateId(templateId);
+        templateKraRepository.deleteByTemplateId(templateId);
+        templateKpiRepository.flush();
+        int kraOrder = 0;
+        for (PmsGoalTemplateKraKpiRequest.Kra kraRequest : request.kras()) {
+            PmsKraMasterEntity kra = kras.get(kraRequest.kraId());
+            PmsGoalTemplateKraEntity row = templateKraMapper.toEntity(
+                    PmsGoalTemplateKraDTO.builder().displayOrder(kraOrder++).build());
+            row.setTemplate(template);
+            row.setKra(kra);
+            templateKraRepository.save(row);
+            int kpiOrder = 0;
+            for (PmsGoalTemplateKraKpiRequest.Kpi kpiRequest : kraRequest.kpis()) {
+                PmsKpiMasterEntity kpi = kpis.get(kpiRequest.kpiId());
+                PmsGoalTemplateKpiEntity kpiRow = templateKpiMapper.toEntity(PmsGoalTemplateKpiDTO.builder()
+                        .weightage(kpiRequest.weightage())
+                        .targetType(kpiRequest.targetType() == null || kpiRequest.targetType().isBlank()
+                                ? kpi.getTargetType() : parseTargetType(kpiRequest.targetType()))
+                        .displayOrder(kpiOrder++)
+                        .build());
+                kpiRow.setTemplate(template);
+                kpiRow.setKra(kra);
+                kpiRow.setKpi(kpi);
+                templateKpiRepository.save(kpiRow);
+            }
+        }
+        templateKpiRepository.flush();
+        demoteIfIncomplete(template);
+        return toResponse(template);
+    }
+
+    /** Screen 2.4 "Save": replaces the competency selection; when non-empty it must total 100. */
+    @Transactional
+    public PmsGoalTemplateResponse saveCompetencies(String organisationId, UUID templateId,
+                                                    PmsGoalTemplateCompetencyRequest request) {
+        log.info("Saving competencies of goal template {}", templateId);
+        PmsGoalTemplateEntity template = find(organisationId, templateId);
+        Map<UUID, PmsCompetencyMasterEntity> competencies = new LinkedHashMap<>();
+        BigDecimal total = BigDecimal.ZERO;
+        boolean unweighted = false;
+        for (PmsGoalTemplateCompetencyRequest.Item item : request.competencies()) {
+            if (competencies.containsKey(item.competencyId())) {
+                throw DomainException.unprocessable("Each competency may only be added once.", "VALIDATION_ERROR");
+            }
+            PmsCompetencyMasterEntity competency = competencyRepository
+                    .findByIdAndOrganisationId(item.competencyId(), organisationId)
+                    .filter(c -> Boolean.TRUE.equals(c.getIsActive()) && c.getStatus() == PmsMasterStatus.ACTIVE)
+                    .orElseThrow(() -> DomainException.unprocessable("competency_id " + item.competencyId()
+                            + " does not refer to an active competency", "PMS_COMPETENCY_NOT_FOUND"));
+            competencies.put(competency.getId(), competency);
+            if (item.weightage() == null) {
+                unweighted = true;
+            } else {
+                total = total.add(item.weightage());
+            }
+        }
+        // No weights typed (the mockup has no weight column): share 100 equally, the last one takes the rest.
+        List<BigDecimal> weights = new java.util.ArrayList<>();
+        if (unweighted) {
+            int n = request.competencies().size();
+            BigDecimal each = HUNDRED.divide(BigDecimal.valueOf(n), 2, java.math.RoundingMode.DOWN);
+            for (int i = 0; i < n; i++) {
+                weights.add(i == n - 1 ? HUNDRED.subtract(each.multiply(BigDecimal.valueOf(n - 1L))) : each);
+            }
+            total = HUNDRED;
+        } else {
+            request.competencies().forEach(i -> weights.add(i.weightage()));
+        }
+        // An empty list clears the selection (guide §4.6); the 100% rule applies only when there are rows.
+        if (!request.competencies().isEmpty() && total.subtract(HUNDRED).abs().compareTo(TOLERANCE) > 0) {
+            throw DomainException.unprocessable("Competency weightage must total 100 (got " + total + ").",
+                    "PMS_TEMPLATE_INCOMPLETE");
+        }
+
+        templateCompetencyRepository.deleteByTemplateId(templateId);
+        templateCompetencyRepository.flush();
+        int order = 0;
+        for (PmsGoalTemplateCompetencyRequest.Item item : request.competencies()) {
+            PmsGoalTemplateCompetencyEntity row = templateCompetencyMapper.toEntity(
+                    PmsGoalTemplateCompetencyDTO.builder().weightage(weights.get(order)).displayOrder(order++)
+                            .build());
+            row.setTemplate(template);
+            row.setCompetency(competencies.get(item.competencyId()));
+            templateCompetencyRepository.save(row);
+        }
+        templateCompetencyRepository.flush();
+
+        // The last wizard step: a complete template that is still a draft becomes active.
+        if (template.getStatus() == PmsTemplateStatus.DRAFT && isComplete(templateId)) {
+            template.setStatus(PmsTemplateStatus.ACTIVE);
+            templateRepository.save(template);
+        }
+        return toResponse(template);
+    }
+
+    /**
+     * Activates or deactivates a template (screen 2.1 status switch). A template only becomes active while it
+     * is complete, and only one template may be active for a role in a year, because goal assignment picks
+     * the role's template by that rule.
+     */
+    @Transactional
+    public PmsGoalTemplateResponse setStatus(String organisationId, UUID templateId, String requested) {
+        PmsGoalTemplateEntity template = find(organisationId, templateId);
+        PmsTemplateStatus status;
+        try {
+            status = PmsTemplateStatus.valueOf(requested.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw DomainException.unprocessable("status must be one of: draft, active, inactive",
+                    "VALIDATION_ERROR");
+        }
+        if (status == PmsTemplateStatus.ACTIVE) {
+            if (!isComplete(templateId)) {
+                throw DomainException.conflict("A template needs KRAs and KPIs totalling 100 and competencies "
+                        + "totalling 100 before it can be activated.", "PMS_TEMPLATE_INCOMPLETE");
+            }
+            if (templateRepository.existsByOrganisationIdAndRoleIdAndFinancialYearAndStatusAndIdNot(organisationId,
+                    template.getRoleId(), template.getFinancialYear(), PmsTemplateStatus.ACTIVE, templateId)) {
+                throw DomainException.conflict("Another template is already active for this role in "
+                        + template.getFinancialYear() + ". Deactivate it first.", "PMS_TEMPLATE_ROLE_CONFLICT");
+            }
+        }
+        log.info("Goal template {} status {} -> {}", templateId, template.getStatus(), status);
+        template.setStatus(status);
+        return toResponse(templateRepository.save(template));
+    }
+
+    /**
+     * Clones a template as a new draft ("... (Copy)") in the same financial year, with its KRAs, KPIs and
+     * competencies.
+     */
+    @Transactional
+    public PmsGoalTemplateResponse duplicate(String organisationId, UUID templateId) {
+        PmsGoalTemplateEntity src = find(organisationId, templateId);
+        String suffix = " (Copy)";
+        String name = src.getTemplateName();
+        if (name.length() + suffix.length() > MAX_NAME_LENGTH) {
+            name = name.substring(0, MAX_NAME_LENGTH - suffix.length());
+        }
+        PmsGoalTemplateEntity copy = templateRepository.save(PmsGoalTemplateEntity.builder()
+                .organisationId(organisationId)
+                .financialYear(src.getFinancialYear())
+                .templateName(name + suffix)
+                .description(src.getDescription())
+                .departmentId(src.getDepartmentId())
+                .roleId(src.getRoleId())
+                .plantId(src.getPlantId())
+                .effectiveFrom(src.getEffectiveFrom())
+                .status(PmsTemplateStatus.DRAFT)
+                .build());
+        copyRows(src, copy);
+        log.info("Duplicated goal template {} as {}", templateId, copy.getId());
+        return toResponse(copy);
+    }
+
+    /** "Copy Template" preview: how many templates a previous year has, and how many of their roles already have
+     * one in the target year and would be skipped. */
+    @Transactional(readOnly = true)
+    public PmsGoalTemplateCopyPreviewResponse getCopyPreview(String organisationId, String previousYear,
+                                                             String targetYear) {
+        validateCopyYears(previousYear, targetYear);
+        List<PmsGoalTemplateEntity> source =
+                templateRepository.findByOrganisationIdAndFinancialYearAndIsActiveTrue(organisationId, previousYear);
+        long alreadyInTarget = source.stream()
+                .filter(t -> templateRepository.existsByOrganisationIdAndRoleIdAndFinancialYearAndIsActiveTrue(
+                        organisationId, t.getRoleId(), targetYear))
+                .count();
+        return new PmsGoalTemplateCopyPreviewResponse(source.size(), (int) alreadyInTarget);
+    }
+
+    /** Copies every template of {@code previousYear} into {@code targetYear} as a draft, with its KRAs, KPIs and
+     * competencies. A role that already has a template in the target year is skipped. */
+    @Transactional
+    public PmsGoalTemplateCopyResultResponse copyTemplates(String organisationId, String previousYear,
+                                                           String targetYear) {
+        validateCopyYears(previousYear, targetYear);
+        log.info("Copying goal templates of organisation {} from FY {} to FY {}", organisationId, previousYear,
+                targetYear);
+        List<PmsGoalTemplateEntity> source =
+                templateRepository.findByOrganisationIdAndFinancialYearAndIsActiveTrue(organisationId, previousYear);
+        int yearShift = startYear(targetYear) - startYear(previousYear);
+        int copied = 0;
+        int skipped = 0;
+        for (PmsGoalTemplateEntity src : source) {
+            if (templateRepository.existsByOrganisationIdAndRoleIdAndFinancialYearAndIsActiveTrue(organisationId,
+                    src.getRoleId(), targetYear)) {
+                skipped++;
+                continue;
+            }
+            PmsGoalTemplateEntity copy = templateRepository.save(PmsGoalTemplateEntity.builder()
+                    .organisationId(organisationId)
+                    .financialYear(targetYear)
+                    .templateName(src.getTemplateName())
+                    .description(src.getDescription())
+                    .departmentId(src.getDepartmentId())
+                    .roleId(src.getRoleId())
+                    .plantId(src.getPlantId())
+                    .effectiveFrom(src.getEffectiveFrom().plusYears(yearShift))
+                    .status(PmsTemplateStatus.DRAFT)
+                    .build());
+
+            copyRows(src, copy);
+            copied++;
+        }
+        return new PmsGoalTemplateCopyResultResponse(copied, skipped);
+    }
+
+    /** Copies the KRA, KPI and competency rows of one template onto another. */
+    private void copyRows(PmsGoalTemplateEntity src, PmsGoalTemplateEntity copy) {
+        for (PmsGoalTemplateKraEntity row : templateKraRepository.findByTemplateIdOrderByDisplayOrderAsc(
+                src.getId())) {
+            templateKraRepository.save(PmsGoalTemplateKraEntity.builder()
+                    .template(copy).kra(row.getKra()).displayOrder(row.getDisplayOrder()).build());
+        }
+        for (PmsGoalTemplateKpiEntity row : templateKpiRepository.findByTemplateIdOrderByDisplayOrderAsc(
+                src.getId())) {
+            templateKpiRepository.save(PmsGoalTemplateKpiEntity.builder()
+                    .template(copy).kra(row.getKra()).kpi(row.getKpi()).weightage(row.getWeightage())
+                    .targetType(row.getTargetType()).displayOrder(row.getDisplayOrder()).build());
+        }
+        for (PmsGoalTemplateCompetencyEntity row : templateCompetencyRepository
+                .findByTemplateIdOrderByDisplayOrderAsc(src.getId())) {
+            templateCompetencyRepository.save(PmsGoalTemplateCompetencyEntity.builder()
+                    .template(copy).competency(row.getCompetency()).weightage(row.getWeightage())
+                    .displayOrder(row.getDisplayOrder()).build());
+        }
+    }
+
+    private static void validateCopyYears(String previousYear, String targetYear) {
+        if (previousYear == null || previousYear.isBlank() || targetYear == null || targetYear.isBlank()) {
+            throw DomainException.unprocessable("previous_year and target_year are required", "VALIDATION_ERROR");
+        }
+        if (previousYear.trim().equalsIgnoreCase(targetYear.trim())) {
+            throw DomainException.unprocessable("previous_year and target_year must differ", "VALIDATION_ERROR");
+        }
+    }
+
+    private static int startYear(String financialYear) {
+        try {
+            return Integer.parseInt(financialYear.trim().substring(0, 4));
+        } catch (RuntimeException e) {
+            throw DomainException.unprocessable("financial_year must start with a 4-digit year", "VALIDATION_ERROR");
+        }
+    }
+
+    // ── internals ────────────────────────────────────────────────────────────
+
+    private PmsGoalTemplateEntity find(String organisationId, UUID templateId) {
+        return templateRepository.findByIdAndOrganisationId(templateId, organisationId)
+                .filter(t -> Boolean.TRUE.equals(t.getIsActive()))
+                .orElseThrow(() -> DomainException.notFound("Goal template not found", "PMS_TEMPLATE_NOT_FOUND"));
+    }
+
+    /** {@code inactive} is kept; anything else (including active) starts as a draft until the template is complete. */
+    private static PmsTemplateStatus initialStatus(String requested) {
+        if (requested == null || requested.isBlank()) {
+            return PmsTemplateStatus.DRAFT;
+        }
+        try {
+            PmsTemplateStatus status = PmsTemplateStatus.valueOf(requested.trim().toUpperCase(Locale.ROOT));
+            return status == PmsTemplateStatus.INACTIVE ? PmsTemplateStatus.INACTIVE : PmsTemplateStatus.DRAFT;
+        } catch (IllegalArgumentException e) {
+            throw DomainException.unprocessable("status must be one of: draft, active, inactive",
+                    "VALIDATION_ERROR");
+        }
+    }
+
+    private void demoteIfIncomplete(PmsGoalTemplateEntity template) {
+        if (template.getStatus() == PmsTemplateStatus.ACTIVE && !isComplete(template.getId())) {
+            template.setStatus(PmsTemplateStatus.DRAFT);
+            templateRepository.save(template);
+        }
+    }
+
+    /** Every selected KRA has KPIs, KPI weights total 100, and competency weights total 100. */
+    private boolean isComplete(UUID templateId) {
+        List<PmsGoalTemplateKraEntity> kras = templateKraRepository.findByTemplateIdOrderByDisplayOrderAsc(templateId);
+        List<PmsGoalTemplateKpiEntity> kpis = templateKpiRepository.findByTemplateIdOrderByDisplayOrderAsc(templateId);
+        if (kras.isEmpty()) {
+            return false;
+        }
+        Set<UUID> krasWithKpis = new HashSet<>();
+        kpis.forEach(k -> krasWithKpis.add(k.getKra().getId()));
+        if (!kras.stream().allMatch(k -> krasWithKpis.contains(k.getKra().getId()))) {
+            return false;
+        }
+        BigDecimal kpiTotal = kpis.stream().map(PmsGoalTemplateKpiEntity::getWeightage)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal competencyTotal = templateCompetencyRepository.findByTemplateIdOrderByDisplayOrderAsc(templateId)
+                .stream().map(PmsGoalTemplateCompetencyEntity::getWeightage).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return kpiTotal.subtract(HUNDRED).abs().compareTo(TOLERANCE) <= 0
+                && competencyTotal.subtract(HUNDRED).abs().compareTo(TOLERANCE) <= 0;
+    }
+
+    private static PmsTargetType parseTargetType(String value) {
+        try {
+            return PmsTargetType.valueOf(value.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw DomainException.unprocessable("target_type must be one of: individual, common",
+                    "VALIDATION_ERROR");
+        }
+    }
+
+    private PmsGoalTemplateResponse toResponse(PmsGoalTemplateEntity template) {
+        UUID id = template.getId();
+        Map<UUID, List<PmsGoalTemplateResponse.Kpi>> kpisByKra = new LinkedHashMap<>();
+        BigDecimal kpiTotal = BigDecimal.ZERO;
+        for (PmsGoalTemplateKpiEntity row : templateKpiRepository.findByTemplateIdOrderByDisplayOrderAsc(id)) {
+            PmsKpiMasterEntity kpi = row.getKpi();
+            kpisByKra.computeIfAbsent(row.getKra().getId(), k -> new ArrayList<>())
+                    .add(new PmsGoalTemplateResponse.Kpi(kpi.getId(), kpi.getName(), kpi.getUnit(), row.getWeightage(),
+                            wire(row.getTargetType()), kpi.getExpectedOutcome(), kpi.getEvidenceRequired()));
+            kpiTotal = kpiTotal.add(row.getWeightage());
+        }
+        List<PmsGoalTemplateResponse.Kra> kras = templateKraRepository.findByTemplateIdOrderByDisplayOrderAsc(id)
+                .stream()
+                .map(r -> new PmsGoalTemplateResponse.Kra(r.getKra().getId(), r.getKra().getName(),
+                        kpisByKra.getOrDefault(r.getKra().getId(), List.of())))
+                .toList();
+
+        BigDecimal competencyTotal = BigDecimal.ZERO;
+        List<PmsGoalTemplateResponse.Competency> competencies = new ArrayList<>();
+        for (PmsGoalTemplateCompetencyEntity row : templateCompetencyRepository
+                .findByTemplateIdOrderByDisplayOrderAsc(id)) {
+            PmsCompetencyMasterEntity c = row.getCompetency();
+            competencies.add(new PmsGoalTemplateResponse.Competency(c.getId(), c.getName(), c.getCategory(),
+                    wire(c.getCompetencyType()), row.getWeightage()));
+            competencyTotal = competencyTotal.add(row.getWeightage());
+        }
+        return new PmsGoalTemplateResponse(id, template.getFinancialYear(), template.getTemplateName(),
+                template.getDescription(), template.getDepartmentId(), template.getRoleId(), template.getPlantId(),
+                template.getEffectiveFrom(), wire(template.getStatus()), kras, competencies, kpiTotal,
+                competencyTotal);
+    }
+
+    private static String wire(Enum<?> value) {
+        return value == null ? null : value.name().toLowerCase(Locale.ROOT);
+    }
+}

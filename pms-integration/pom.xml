@@ -31,6 +31,38 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- RabbitMQ: this module owns the Direct Reply-To RPC plumbing itself
+             now (com.sentrifugo.pms.integration.rpc: ServiceRpcClient,
+             RpcServer, Rpc*Exception), formerly a separate pms-messaging
+             module. Folded in because pms-integration was that code's only
+             consumer; a module with exactly one internal consumer and no
+             independent reuse boundary isn't pulling its own weight. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- TypeReference for IamEmployeeClient's List<IamEmployee> RPC reply,
+             and the record (de)serialisation ServiceRpcClient does internally.
+             Jackson 3 (tools.jackson), not classic com.fasterxml.jackson.databind;
+             Spring Boot 4's JacksonAutoConfiguration only registers a Jackson 3
+             JsonMapper bean by default. -->
+        <dependency>
+            <groupId>tools.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
 </project>
