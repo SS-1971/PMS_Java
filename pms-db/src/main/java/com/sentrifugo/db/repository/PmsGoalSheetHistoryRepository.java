@@ -12,6 +12,9 @@ public interface PmsGoalSheetHistoryRepository extends JpaRepository<PmsGoalShee
     /** The whole trail of one sheet, oldest first. */
     List<PmsGoalSheetHistoryEntity> findByAssignmentIdOrderByOccurredOnAsc(UUID assignmentId);
 
+    /** Batch lookup used when a caller renders several sheets' history at once, to avoid one query per sheet. */
+    List<PmsGoalSheetHistoryEntity> findByAssignmentIdInOrderByOccurredOnAsc(Collection<UUID> assignmentIds);
+
     /** HOD decisions across the organisation for one year, newest first. */
     List<PmsGoalSheetHistoryEntity> findByAssignmentOrganisationIdAndAssignmentFinancialYearAndActorRoleAndActionInOrderByOccurredOnDesc(
             String organisationId, String financialYear, String actorRole, Collection<String> actions);

@@ -155,15 +155,16 @@ public class PmsCalibrationService {
                     GUIDELINE.get(rating), hrPercent.get(rating)));
         }
 
+        // Every sent employee's HR competency lines, fetched in one query instead of one per employee.
         Map<java.util.UUID, List<Integer>> hrRatings = new HashMap<>();
-        for (PmsAppraisalEntity ap : sent) {
-            List<Integer> given = new ArrayList<>();
-            for (PmsAppraisalLineEntity l : lineRepository.findByAppraisalId(ap.getId())) {
+        sent.forEach(ap -> hrRatings.put(ap.getId(), new ArrayList<>()));
+        if (!sent.isEmpty()) {
+            List<java.util.UUID> appraisalIds = sent.stream().map(PmsAppraisalEntity::getId).toList();
+            for (PmsAppraisalLineEntity l : lineRepository.findByAppraisalIdIn(appraisalIds)) {
                 if (l.getLineType() == PmsAppraisalLineType.HR_COMPETENCY && l.getHrRating() != null) {
-                    given.add(l.getHrRating());
+                    hrRatings.get(l.getAppraisal().getId()).add(l.getHrRating());
                 }
             }
-            hrRatings.put(ap.getId(), given);
         }
         List<PmsCalibrationResponse.Employee> employees = sent.stream().map(ap -> {
             List<Integer> given = hrRatings.get(ap.getId());

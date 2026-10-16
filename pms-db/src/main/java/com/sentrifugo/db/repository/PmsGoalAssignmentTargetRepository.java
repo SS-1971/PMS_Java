@@ -13,6 +13,9 @@ public interface PmsGoalAssignmentTargetRepository extends JpaRepository<PmsGoal
 
     List<PmsGoalAssignmentTargetEntity> findByAssignmentId(UUID assignmentId);
 
+    /** Batch lookup used when a caller processes several assignments at once, to avoid one query per assignment. */
+    List<PmsGoalAssignmentTargetEntity> findByAssignmentIdIn(Collection<UUID> assignmentIds);
+
     void deleteByAssignmentId(UUID assignmentId);
 
     /** Which of the given assignments have at least one saved target (the others only have a template). */

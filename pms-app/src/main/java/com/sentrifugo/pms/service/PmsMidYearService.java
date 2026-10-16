@@ -81,10 +81,13 @@ public class PmsMidYearService {
                     .forEach(r -> statusByAssignment.put(r.getAssignment().getId(), r.getStatus()));
         }
 
+        // Every team member's targets, fetched in one batch instead of once per team member.
+        Map<UUID, List<PmsGoalAssignmentTargetEntity>> targetsByAssignment = access.targetsInOrderBatch(approved);
         List<PmsMidYearRowResponse> rows = new ArrayList<>();
         for (PmsGoalAssignmentEntity a : approved) {
             IamEmployee e = employeeById.get(a.getEmployeeUserId());
-            BigDecimal h1 = achievement(a, readings.getOrDefault(a.getId(), Map.of()));
+            BigDecimal h1 = achievement(targetsByAssignment.getOrDefault(a.getId(), List.of()),
+                    readings.getOrDefault(a.getId(), Map.of()));
             rows.add(new PmsMidYearRowResponse(a.getEmployeeUserId(), PmsTeamAccess.fullName(e),
                     e.designationName(), h1, PmsAchievement.rag(h1),
                     PmsTeamAccess.wire(statusByAssignment.getOrDefault(a.getId(), PmsMidYearStatus.NOT_STARTED))));
@@ -257,9 +260,10 @@ public class PmsMidYearService {
                         .build());
     }
 
-    private BigDecimal achievement(PmsGoalAssignmentEntity assignment, Map<UUID, PmsGoalProgressEntity> readings) {
+    private BigDecimal achievement(List<PmsGoalAssignmentTargetEntity> targets,
+                                   Map<UUID, PmsGoalProgressEntity> readings) {
         List<PmsAchievement.Weighted> weighted = new ArrayList<>();
-        for (PmsGoalAssignmentTargetEntity t : access.targetsInOrder(assignment)) {
+        for (PmsGoalAssignmentTargetEntity t : targets) {
             PmsGoalProgressEntity reading = readings.get(t.getKpi().getId());
             weighted.add(new PmsAchievement.Weighted(t.getWeight(),
                     reading == null ? null : PmsAchievement.percent(reading.getActual(), t.getTarget())));

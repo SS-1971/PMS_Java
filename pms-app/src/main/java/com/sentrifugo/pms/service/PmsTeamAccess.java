@@ -85,6 +85,40 @@ public class PmsTeamAccess {
     }
 
     /**
+     * {@link #targetsInOrder} for several assignments at once, keyed by assignment id: one query for every
+     * distinct template's KPI order and one for all the targets, instead of two per assignment. Used by list
+     * and queue screens that would otherwise run {@code targetsInOrder} once per row.
+     */
+    public Map<UUID, List<PmsGoalAssignmentTargetEntity>> targetsInOrderBatch(
+            Collection<PmsGoalAssignmentEntity> assignments) {
+        if (assignments.isEmpty()) {
+            return Map.of();
+        }
+        List<UUID> templateIds = assignments.stream().map(PmsGoalAssignmentEntity::getTemplateId).distinct().toList();
+        Map<UUID, Map<UUID, Integer>> orderByTemplate = new HashMap<>();
+        templateKpiRepository.findByTemplateIdInOrderByDisplayOrderAsc(templateIds).forEach(row -> {
+            Map<UUID, Integer> order = orderByTemplate.computeIfAbsent(row.getTemplate().getId(), k -> new HashMap<>());
+            order.put(row.getKpi().getId(), order.size());
+        });
+        List<UUID> assignmentIds = assignments.stream().map(PmsGoalAssignmentEntity::getId).toList();
+        Map<UUID, UUID> templateByAssignment = new HashMap<>();
+        assignments.forEach(a -> templateByAssignment.put(a.getId(), a.getTemplateId()));
+
+        Map<UUID, List<PmsGoalAssignmentTargetEntity>> byAssignment = new HashMap<>();
+        targetRepository.findByAssignmentIdIn(assignmentIds)
+                .forEach(t -> byAssignment.computeIfAbsent(t.getAssignment().getId(), k -> new java.util.ArrayList<>())
+                        .add(t));
+        byAssignment.replaceAll((assignmentId, targets) -> {
+            Map<UUID, Integer> order = orderByTemplate.getOrDefault(
+                    templateByAssignment.get(assignmentId), Map.of());
+            return targets.stream()
+                    .sorted(Comparator.comparingInt(t -> order.getOrDefault(t.getKpi().getId(), Integer.MAX_VALUE)))
+                    .toList();
+        });
+        return byAssignment;
+    }
+
+    /**
      * The reading to use per KPI for each assignment: the first period in {@code preference} that has an
      * actual, so a half-year figure wins over a running one for the mid-year review.
      */

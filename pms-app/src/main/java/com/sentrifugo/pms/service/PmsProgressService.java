@@ -70,6 +70,11 @@ public class PmsProgressService {
                 .toList();
         Map<UUID, Map<UUID, PmsGoalProgressEntity>> readings = access.readings(approvedIds,
                 PmsProgressPeriod.CURRENT, PmsProgressPeriod.H1, PmsProgressPeriod.FY);
+        // Every approved team member's targets, fetched in one batch instead of once per team member.
+        List<PmsGoalAssignmentEntity> approvedAssignments = byEmployee.values().stream()
+                .filter(a -> a.getStatus() == PmsAssignmentStatus.APPROVED).toList();
+        Map<UUID, List<PmsGoalAssignmentTargetEntity>> targetsByAssignment =
+                access.targetsInOrderBatch(approvedAssignments);
 
         List<PmsTeamProgressResponse> rows = new ArrayList<>();
         for (IamEmployee e : reports) {
@@ -79,14 +84,14 @@ public class PmsProgressService {
                         null, null, null));
                 continue;
             }
-            rows.add(progressRow(e, a, readings.getOrDefault(a.getId(), Map.of())));
+            rows.add(progressRow(e, targetsByAssignment.getOrDefault(a.getId(), List.of()),
+                    readings.getOrDefault(a.getId(), Map.of())));
         }
         return rows;
     }
 
-    private PmsTeamProgressResponse progressRow(IamEmployee employee, PmsGoalAssignmentEntity assignment,
+    private PmsTeamProgressResponse progressRow(IamEmployee employee, List<PmsGoalAssignmentTargetEntity> targets,
                                                 Map<UUID, PmsGoalProgressEntity> readings) {
-        List<PmsGoalAssignmentTargetEntity> targets = access.targetsInOrder(assignment);
         int onTrack = 0;
         List<PmsTeamProgressResponse.Attention> attention = new ArrayList<>();
         List<PmsAchievement.Weighted> weighted = new ArrayList<>();

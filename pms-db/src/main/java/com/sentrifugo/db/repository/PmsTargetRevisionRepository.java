@@ -19,4 +19,8 @@ public interface PmsTargetRevisionRepository extends JpaRepository<PmsTargetRevi
     /** The revision the employee has not acknowledged yet (screen 4.5). */
     Optional<PmsTargetRevisionEntity> findFirstByAssignmentIdAndStatusAndAcknowledgedOnIsNullOrderByRequestedOnDesc(
             UUID assignmentId, com.sentrifugo.db.enums.PmsRevisionStatus status);
+
+    /** Batch lookup used when a caller scans several sheets for a pending revision, to avoid one query per sheet. */
+    List<PmsTargetRevisionEntity> findByAssignmentIdInAndStatus(Collection<UUID> assignmentIds,
+            com.sentrifugo.db.enums.PmsRevisionStatus status);
 }

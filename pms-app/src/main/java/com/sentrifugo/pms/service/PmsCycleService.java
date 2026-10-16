@@ -51,6 +51,7 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -110,7 +111,10 @@ public class PmsCycleService {
 
         var page = cycleRepository.findAll(shared.and(PmsCycleSpecifications.statusIs(statusFilter)),
                 PageRequest.of(skip / pageSize, pageSize, Sort.by(Sort.Direction.DESC, "createdDate")));
-        List<PmsCycleListResponse.Item> items = page.getContent().stream().map(this::toListItem).toList();
+        List<PmsCycleEntity> cycles = page.getContent();
+        Map<UUID, Boolean> allPlantsByCycle = allPlantsByCycle(cycles);
+        List<PmsCycleListResponse.Item> items = cycles.stream()
+                .map(c -> toListItem(c, allPlantsByCycle)).toList();
         return new PmsCycleListResponse(items, page.getTotalElements(), summary);
     }
 
@@ -121,8 +125,20 @@ public class PmsCycleService {
         PmsCycleStatus statusFilter = isBlank(status) ? null : parseStatus(status);
         var spec = PmsCycleSpecifications.matching(organisationId, search, year, typeFilter, plantId)
                 .and(PmsCycleSpecifications.statusIs(statusFilter));
-        return cycleRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdDate")).stream()
-                .map(this::toListItem).toList();
+        List<PmsCycleEntity> cycles = cycleRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdDate"));
+        Map<UUID, Boolean> allPlantsByCycle = allPlantsByCycle(cycles);
+        return cycles.stream().map(c -> toListItem(c, allPlantsByCycle)).toList();
+    }
+
+    /** Batches the applicability lookup for a page/list of cycles into a single query, keyed by cycle id. */
+    private Map<UUID, Boolean> allPlantsByCycle(List<PmsCycleEntity> cycles) {
+        if (cycles.isEmpty()) {
+            return Map.of();
+        }
+        Set<UUID> cycleIds = cycles.stream().map(PmsCycleEntity::getId).collect(java.util.stream.Collectors.toSet());
+        return applicabilityRepository.findByCycleIdIn(cycleIds).stream()
+                .collect(java.util.stream.Collectors.toMap(a -> a.getCycle().getId(),
+                        a -> Boolean.TRUE.equals(a.getAllPlants())));
     }
 
     @Transactional(readOnly = true)
@@ -528,9 +544,8 @@ public class PmsCycleService {
         }
     }
 
-    private PmsCycleListResponse.Item toListItem(PmsCycleEntity cycle) {
-        boolean allPlants = applicabilityRepository.findByCycleId(cycle.getId())
-                .map(a -> Boolean.TRUE.equals(a.getAllPlants())).orElse(false);
+    private PmsCycleListResponse.Item toListItem(PmsCycleEntity cycle, Map<UUID, Boolean> allPlantsByCycle) {
+        boolean allPlants = Boolean.TRUE.equals(allPlantsByCycle.get(cycle.getId()));
         return new PmsCycleListResponse.Item(cycle.getId(), cycle.getCycleCode(), cycle.getName(),
                 wire(cycle.getType()), cycle.getPeriodStart(), cycle.getPeriodEnd(), allPlants ? "All Plants" : null,
                 wire(cycle.getStatus()), toDate(cycle.getCreatedDate()));

@@ -12,5 +12,8 @@ public interface PmsAppraisalLineRepository extends JpaRepository<PmsAppraisalLi
 
     List<PmsAppraisalLineEntity> findByAppraisalId(UUID appraisalId);
 
+    /** Batch lookup used when a caller renders several appraisals' lines at once, to avoid one query per appraisal. */
+    List<PmsAppraisalLineEntity> findByAppraisalIdIn(Collection<UUID> appraisalIds);
+
     void deleteByAppraisalId(UUID appraisalId);
 }

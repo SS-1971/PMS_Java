@@ -373,10 +373,10 @@ public class PmsGoalTemplateService {
         validateCopyYears(previousYear, targetYear);
         List<PmsGoalTemplateEntity> source =
                 templateRepository.findByOrganisationIdAndFinancialYearAndIsActiveTrue(organisationId, previousYear);
-        long alreadyInTarget = source.stream()
-                .filter(t -> templateRepository.existsByOrganisationIdAndRoleIdAndFinancialYearAndIsActiveTrue(
-                        organisationId, t.getRoleId(), targetYear))
-                .count();
+        // The roles that already have a template in the target year, fetched once instead of once per source
+        // template.
+        Set<String> rolesInTarget = rolesWithTemplate(organisationId, targetYear);
+        long alreadyInTarget = source.stream().filter(t -> rolesInTarget.contains(t.getRoleId())).count();
         return new PmsGoalTemplateCopyPreviewResponse(source.size(), (int) alreadyInTarget);
     }
 
@@ -390,12 +390,15 @@ public class PmsGoalTemplateService {
                 targetYear);
         List<PmsGoalTemplateEntity> source =
                 templateRepository.findByOrganisationIdAndFinancialYearAndIsActiveTrue(organisationId, previousYear);
+        // The roles that already have a template in the target year, fetched once instead of once per source
+        // template; updated as rows are copied so two source templates of the same role in this run don't both
+        // get copied.
+        Set<String> rolesInTarget = new java.util.HashSet<>(rolesWithTemplate(organisationId, targetYear));
         int yearShift = startYear(targetYear) - startYear(previousYear);
         int copied = 0;
         int skipped = 0;
         for (PmsGoalTemplateEntity src : source) {
-            if (templateRepository.existsByOrganisationIdAndRoleIdAndFinancialYearAndIsActiveTrue(organisationId,
-                    src.getRoleId(), targetYear)) {
+            if (!rolesInTarget.add(src.getRoleId())) {
                 skipped++;
                 continue;
             }
@@ -436,6 +439,14 @@ public class PmsGoalTemplateService {
                     .template(copy).competency(row.getCompetency()).weightage(row.getWeightage())
                     .displayOrder(row.getDisplayOrder()).build());
         }
+    }
+
+    /** Every role id that already has a (kept) template in a financial year. */
+    private Set<String> rolesWithTemplate(String organisationId, String financialYear) {
+        Set<String> roles = new HashSet<>();
+        templateRepository.findByOrganisationIdAndFinancialYearAndIsActiveTrue(organisationId, financialYear)
+                .forEach(t -> roles.add(t.getRoleId()));
+        return roles;
     }
 
     private static void validateCopyYears(String previousYear, String targetYear) {

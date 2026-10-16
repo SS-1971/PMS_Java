@@ -42,10 +42,19 @@ public class PmsRatingScaleService {
     @Transactional(readOnly = true)
     public List<PmsRatingScaleResponse> getRatingScales(String organisationId, String status) {
         PmsMasterStatus filter = status == null || status.isBlank() ? null : parseStatus(status);
-        return scaleRepository.findByOrganisationIdAndIsActiveTrueOrderByCreatedDateAsc(organisationId).stream()
+        List<PmsRatingScaleEntity> scales = scaleRepository
+                .findByOrganisationIdAndIsActiveTrueOrderByCreatedDateAsc(organisationId).stream()
                 .filter(s -> filter == null || s.getStatus() == filter)
-                .map(this::toResponse)
                 .toList();
+        // Every scale's levels, fetched in one query instead of one per scale.
+        Map<UUID, List<PmsRatingScaleLevelEntity>> levelsByScale = new HashMap<>();
+        if (!scales.isEmpty()) {
+            List<UUID> scaleIds = scales.stream().map(PmsRatingScaleEntity::getId).toList();
+            levelRepository.findByRatingScaleIdInOrderByRatingValueDesc(scaleIds)
+                    .forEach(l -> levelsByScale.computeIfAbsent(l.getRatingScale().getId(),
+                            k -> new java.util.ArrayList<>()).add(l));
+        }
+        return scales.stream().map(s -> toResponse(s, levelsByScale.getOrDefault(s.getId(), List.of()))).toList();
     }
 
     @Transactional(readOnly = true)
@@ -185,8 +194,11 @@ public class PmsRatingScaleService {
     }
 
     private PmsRatingScaleResponse toResponse(PmsRatingScaleEntity scale) {
-        List<PmsRatingScaleResponse.Level> levels = levelRepository
-                .findByRatingScaleIdOrderByRatingValueDesc(scale.getId()).stream()
+        return toResponse(scale, levelRepository.findByRatingScaleIdOrderByRatingValueDesc(scale.getId()));
+    }
+
+    private PmsRatingScaleResponse toResponse(PmsRatingScaleEntity scale, List<PmsRatingScaleLevelEntity> levelRows) {
+        List<PmsRatingScaleResponse.Level> levels = levelRows.stream()
                 .map(l -> new PmsRatingScaleResponse.Level(l.getRatingValue(), l.getLabel(), l.getDefinition(),
                         l.getMinimumScore(), l.getMaximumScore(), l.getColourCode(), l.getDisplayOrder()))
                 .toList();

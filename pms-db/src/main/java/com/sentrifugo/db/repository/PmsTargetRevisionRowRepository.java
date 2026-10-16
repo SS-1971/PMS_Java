@@ -11,4 +11,7 @@ import com.sentrifugo.db.entity.PmsTargetRevisionRowEntity;
 public interface PmsTargetRevisionRowRepository extends JpaRepository<PmsTargetRevisionRowEntity, UUID> {
 
     List<PmsTargetRevisionRowEntity> findByRevisionId(UUID revisionId);
+
+    /** Batch lookup used when a caller processes several revisions at once, to avoid one query per revision. */
+    List<PmsTargetRevisionRowEntity> findByRevisionIdIn(Collection<UUID> revisionIds);
 }

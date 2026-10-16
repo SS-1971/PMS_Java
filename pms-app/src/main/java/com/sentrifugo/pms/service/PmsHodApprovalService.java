@@ -76,17 +76,70 @@ public class PmsHodApprovalService {
 
     // ── list ─────────────────────────────────────────────────────────────────
 
-    /** Goal sheets sent to the HOD plus approved sheets that have a target revision waiting. Newest first. */
+    /**
+     * Goal sheets sent to the HOD plus approved sheets that have a target revision waiting. Newest first.
+     *
+     * <p>Every row's targets, history and change-request counts are fetched in a handful of batched queries
+     * (keyed by assignment / revision id) instead of the several per-row queries this used to run, so the
+     * query count no longer scales with how many sheets are in the queue.
+     */
     @Transactional(readOnly = true)
     public List<PmsHodQueueItemResponse> queue(PmsUserPrincipal hod, String financialYear) {
-        List<PmsHodQueueItemResponse> out = new ArrayList<>();
-        for (PmsGoalAssignmentEntity a : assignmentRepository.findByOrganisationIdAndFinancialYearAndStatusIn(
-                hod.organisationId(), financialYear, SHEET_QUEUE)) {
-            out.add(sheetItem(a));
+        List<PmsGoalAssignmentEntity> sheets = assignmentRepository.findByOrganisationIdAndFinancialYearAndStatusIn(
+                hod.organisationId(), financialYear, SHEET_QUEUE);
+        List<PmsGoalAssignmentEntity> approvedList = assignmentRepository
+                .findByOrganisationIdAndFinancialYearAndStatusIn(hod.organisationId(), financialYear,
+                        List.of(PmsAssignmentStatus.APPROVED));
+
+        List<PmsGoalAssignmentEntity> all = new ArrayList<>(sheets);
+        all.addAll(approvedList);
+        List<UUID> allIds = all.stream().map(PmsGoalAssignmentEntity::getId).toList();
+
+        Map<UUID, List<PmsGoalAssignmentTargetEntity>> targetsByAssignment = access.targetsInOrderBatch(all);
+        Map<UUID, List<PmsGoalSheetHistoryEntity>> historyByAssignment = new HashMap<>();
+        if (!allIds.isEmpty()) {
+            historyRepository.findByAssignmentIdInOrderByOccurredOnAsc(allIds)
+                    .forEach(h -> historyByAssignment
+                            .computeIfAbsent(h.getAssignment().getId(), k -> new ArrayList<>()).add(h));
         }
-        for (PmsGoalAssignmentEntity a : assignmentRepository.findByOrganisationIdAndFinancialYearAndStatusIn(
-                hod.organisationId(), financialYear, List.of(PmsAssignmentStatus.APPROVED))) {
-            pendingRevision(a).ifPresent(r -> out.add(revisionItem(a, r)));
+        Map<UUID, Integer> changeRequestCountByAssignment = new HashMap<>();
+        if (!allIds.isEmpty()) {
+            changeRequestRepository.findByAssignmentIdIn(allIds)
+                    .forEach(r -> changeRequestCountByAssignment.merge(r.getAssignment().getId(), 1, Integer::sum));
+        }
+
+        List<UUID> approvedIds = approvedList.stream().map(PmsGoalAssignmentEntity::getId).toList();
+        Map<UUID, PmsTargetRevisionEntity> pendingRevisionByAssignment = new HashMap<>();
+        if (!approvedIds.isEmpty()) {
+            for (PmsTargetRevisionEntity r : revisionRepository.findByAssignmentIdInAndStatus(approvedIds,
+                    PmsRevisionStatus.PENDING_HOD)) {
+                PmsTargetRevisionEntity existing = pendingRevisionByAssignment.get(r.getAssignment().getId());
+                if (existing == null || r.getRequestedOn().isAfter(existing.getRequestedOn())) {
+                    pendingRevisionByAssignment.put(r.getAssignment().getId(), r);
+                }
+            }
+        }
+        List<UUID> revisionIds = pendingRevisionByAssignment.values().stream()
+                .map(PmsTargetRevisionEntity::getId).toList();
+        Map<UUID, List<PmsTargetRevisionRowEntity>> rowsByRevision = new HashMap<>();
+        if (!revisionIds.isEmpty()) {
+            revisionRowRepository.findByRevisionIdIn(revisionIds)
+                    .forEach(row -> rowsByRevision.computeIfAbsent(row.getRevision().getId(), k -> new ArrayList<>())
+                            .add(row));
+        }
+
+        List<PmsHodQueueItemResponse> out = new ArrayList<>();
+        for (PmsGoalAssignmentEntity a : sheets) {
+            out.add(sheetItem(a, targetsByAssignment.getOrDefault(a.getId(), List.of()),
+                    historyByAssignment.getOrDefault(a.getId(), List.of()),
+                    changeRequestCountByAssignment.getOrDefault(a.getId(), 0)));
+        }
+        for (PmsGoalAssignmentEntity a : approvedList) {
+            PmsTargetRevisionEntity revision = pendingRevisionByAssignment.get(a.getId());
+            if (revision != null) {
+                out.add(revisionItem(a, revision, rowsByRevision.getOrDefault(revision.getId(), List.of()),
+                        historyByAssignment.getOrDefault(a.getId(), List.of())));
+            }
         }
         out.sort(Comparator.comparing(PmsHodQueueItemResponse::askedOn,
                 Comparator.nullsLast(Comparator.reverseOrder())));
@@ -94,9 +147,15 @@ public class PmsHodApprovalService {
     }
 
     private PmsHodQueueItemResponse sheetItem(PmsGoalAssignmentEntity a) {
+        return sheetItem(a, access.targetsInOrder(a), historyRepository.findByAssignmentIdOrderByOccurredOnAsc(a.getId()),
+                changeRequestRepository.findByAssignmentIdOrderByRequestedOnAscRevisionNoAsc(a.getId()).size());
+    }
+
+    private PmsHodQueueItemResponse sheetItem(PmsGoalAssignmentEntity a, List<PmsGoalAssignmentTargetEntity> targets,
+                                              List<PmsGoalSheetHistoryEntity> history, int changeRequestCount) {
         PmsGoalAssignmentTargetEntity first = null;
         int moved = 0;
-        for (PmsGoalAssignmentTargetEntity t : access.targetsInOrder(a)) {
+        for (PmsGoalAssignmentTargetEntity t : targets) {
             if (isMoved(t)) {
                 moved++;
                 if (first == null) {
@@ -104,13 +163,12 @@ public class PmsHodApprovalService {
                 }
             }
         }
-        LocalDate askedOn = historyRepository.findByAssignmentIdOrderByOccurredOnAsc(a.getId()).stream()
+        LocalDate askedOn = history.stream()
                 .filter(h -> "sent_to_hod".equals(h.getAction()))
                 .map(h -> h.getOccurredOn().toLocalDate())
                 .reduce((x, y) -> y)
                 .orElse(a.getAcknowledgedOn() == null ? null : a.getAcknowledgedOn().toLocalDate());
-        int rounds = changeRequestRepository.findByAssignmentIdOrderByRequestedOnAscRevisionNoAsc(a.getId()).size()
-                + (int) historyRepository.countByAssignmentIdAndAction(a.getId(), "returned");
+        int rounds = changeRequestCount + returnedCount(history);
         return new PmsHodQueueItemResponse(a.getEmployeeUserId(), a.getEmployeeName(), a.getEmpCode(),
                 a.getDesignationName(), a.getManagerName(), PmsSheetHistory.GOAL_SHEET,
                 PmsTeamAccess.wire(a.getStatus()), moved > 0,
@@ -120,7 +178,14 @@ public class PmsHodApprovalService {
     }
 
     private PmsHodQueueItemResponse revisionItem(PmsGoalAssignmentEntity a, PmsTargetRevisionEntity revision) {
-        List<PmsTargetRevisionRowEntity> pending = revisionRowRepository.findByRevisionId(revision.getId()).stream()
+        return revisionItem(a, revision, revisionRowRepository.findByRevisionId(revision.getId()),
+                historyRepository.findByAssignmentIdOrderByOccurredOnAsc(a.getId()));
+    }
+
+    private PmsHodQueueItemResponse revisionItem(PmsGoalAssignmentEntity a, PmsTargetRevisionEntity revision,
+                                                 List<PmsTargetRevisionRowEntity> revisionRows,
+                                                 List<PmsGoalSheetHistoryEntity> history) {
+        List<PmsTargetRevisionRowEntity> pending = revisionRows.stream()
                 .filter(r -> r.getDecision() == null).toList();
         PmsTargetRevisionRowEntity first = pending.isEmpty() ? null : pending.get(0);
         return new PmsHodQueueItemResponse(a.getEmployeeUserId(), a.getEmployeeName(), a.getEmpCode(),
@@ -129,8 +194,11 @@ public class PmsHodApprovalService {
                 first == null ? null : new PmsHodQueueItemResponse.Change(first.getKpi().getName(),
                         first.getKpi().getUnit(), first.getPreviousTarget(), first.getRevisedTarget()),
                 Math.max(0, pending.size() - 1), a.getManagerName(), PmsSheetHistory.MANAGER,
-                revision.getRequestedOn().toLocalDate(),
-                (int) historyRepository.countByAssignmentIdAndAction(a.getId(), "returned"));
+                revision.getRequestedOn().toLocalDate(), returnedCount(history));
+    }
+
+    private static int returnedCount(List<PmsGoalSheetHistoryEntity> history) {
+        return (int) history.stream().filter(h -> "returned".equals(h.getAction())).count();
     }
 
     // ── review ───────────────────────────────────────────────────────────────

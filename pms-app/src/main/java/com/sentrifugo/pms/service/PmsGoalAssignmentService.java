@@ -180,12 +180,12 @@ public class PmsGoalAssignmentService {
                         request.financialYear(), inRole.stream().map(IamEmployee::userId).toList())
                 .forEach(a -> alreadyHave.add(a.getEmployeeUserId()));
 
-        int assigned = 0;
+        List<PmsGoalAssignmentEntity> toCreate = new ArrayList<>();
         for (IamEmployee e : inRole) {
             if (alreadyHave.contains(e.userId())) {
                 continue;
             }
-            assignmentRepository.save(PmsGoalAssignmentEntity.builder()
+            toCreate.add(PmsGoalAssignmentEntity.builder()
                     .organisationId(manager.organisationId())
                     .employeeUserId(e.userId())
                     .managerUserId(manager.id())
@@ -198,8 +198,9 @@ public class PmsGoalAssignmentService {
                     .departmentId(e.departmentId())
                     .managerName(manager.fullName())
                     .build());
-            assigned++;
         }
+        assignmentRepository.saveAll(toCreate);
+        int assigned = toCreate.size();
         log.info("Manager {} assigned template {} to {} employees ({} already had one)", manager.id(),
                 template.getId(), assigned, alreadyHave.size());
         return new PmsTemplateAssignmentResponse(request.designationId(), template.getId(),
@@ -211,17 +212,41 @@ public class PmsGoalAssignmentService {
     public List<String> sendToHod(PmsUserPrincipal manager, PmsSendToHodRequest request) {
         List<String> sent = new ArrayList<>();
         String note = blankToNull(request.remarks());
-        for (String employeeUserId : request.employeeUserIds().stream().distinct().toList()) {
-            requireTeamMember(manager, employeeUserId);
-            PmsGoalAssignmentEntity a = requireAssignment(manager.organisationId(), employeeUserId,
-                    request.financialYear());
+        List<String> employeeUserIds = request.employeeUserIds().stream().distinct().toList();
+
+        // The team and the assignments are fetched once for the whole batch instead of once per employee.
+        Set<String> teamIds = iam.directReports(manager.organisationId(), manager.id()).stream()
+                .map(IamEmployee::userId).collect(java.util.stream.Collectors.toSet());
+        Map<String, PmsGoalAssignmentEntity> assignmentByEmployee = new HashMap<>();
+        assignmentRepository.findByOrganisationIdAndFinancialYearAndEmployeeUserIdIn(manager.organisationId(),
+                        request.financialYear(), employeeUserIds)
+                .forEach(a -> assignmentByEmployee.put(a.getEmployeeUserId(), a));
+        Map<UUID, List<PmsGoalAssignmentTargetEntity>> targetsByAssignment = new HashMap<>();
+        if (!assignmentByEmployee.isEmpty()) {
+            targetRepository.findByAssignmentIdIn(
+                            assignmentByEmployee.values().stream().map(PmsGoalAssignmentEntity::getId).toList())
+                    .forEach(t -> targetsByAssignment
+                            .computeIfAbsent(t.getAssignment().getId(), id -> new ArrayList<>()).add(t));
+        }
+
+        for (String employeeUserId : employeeUserIds) {
+            if (!teamIds.contains(employeeUserId)) {
+                throw new DomainException("This employee is not in your team.", "PMS_NOT_IN_TEAM",
+                        HttpStatus.FORBIDDEN);
+            }
+            PmsGoalAssignmentEntity a = assignmentByEmployee.get(employeeUserId);
+            if (a == null) {
+                throw DomainException.notFound("No goals have been set for " + request.financialYear(),
+                        "PMS_GOALS_NOT_FOUND");
+            }
             if (a.getStatus() != PmsAssignmentStatus.ACKNOWLEDGED) {
                 throw DomainException.unprocessable(
                         "Only acknowledged goal sheets can be sent to the HOD (" + a.getEmployeeName() + ").",
                         "PMS_INVALID_GOAL_STATE");
             }
-            requireCompleteSheet(a);
-            if (!hasRevisedKras(a)) {
+            List<PmsGoalAssignmentTargetEntity> rows = targetsByAssignment.getOrDefault(a.getId(), List.of());
+            requireCompleteSheet(a, rows);
+            if (!hasRevisedKras(rows)) {
                 // Nothing was revised, so there is nothing to put in front of the HOD.
                 approveWithoutHod(a, manager.id(), manager.fullName(), PmsSheetHistory.MANAGER);
                 sent.add(employeeUserId);
@@ -240,9 +265,12 @@ public class PmsGoalAssignmentService {
 
     /** True when any KRA's target moved after the manager first assigned it: what the HOD is asked to approve. */
     private boolean hasRevisedKras(PmsGoalAssignmentEntity a) {
-        return targetRepository.findByAssignmentId(a.getId()).stream()
-                .anyMatch(t -> t.getOriginalTarget() != null && t.getTarget() != null
-                        && t.getTarget().compareTo(t.getOriginalTarget()) != 0);
+        return hasRevisedKras(targetRepository.findByAssignmentId(a.getId()));
+    }
+
+    private boolean hasRevisedKras(List<PmsGoalAssignmentTargetEntity> rows) {
+        return rows.stream().anyMatch(t -> t.getOriginalTarget() != null && t.getTarget() != null
+                && t.getTarget().compareTo(t.getOriginalTarget()) != 0);
     }
 
     /** Approves a sheet with no revised KRAs: goals are frozen and progress tracking can open. */
@@ -258,7 +286,10 @@ public class PmsGoalAssignmentService {
 
     /** A sheet goes to the HOD only complete: every target set and the weights adding up to 100. */
     private void requireCompleteSheet(PmsGoalAssignmentEntity a) {
-        List<PmsGoalAssignmentTargetEntity> rows = targetRepository.findByAssignmentId(a.getId());
+        requireCompleteSheet(a, targetRepository.findByAssignmentId(a.getId()));
+    }
+
+    private void requireCompleteSheet(PmsGoalAssignmentEntity a, List<PmsGoalAssignmentTargetEntity> rows) {
         BigDecimal total = rows.stream().map(PmsGoalAssignmentTargetEntity::getWeight)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         boolean missingTarget = rows.stream().anyMatch(t -> t.getTarget() == null);
